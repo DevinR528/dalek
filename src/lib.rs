@@ -1,11 +1,19 @@
-#![feature(allocator_api)]
+#![feature(allocator_api, asm, llvm_asm)]
+#![allow(unused)]
+
+mod brk;
+mod sc;
 
 use core::{
     alloc::{AllocErr, AllocRef, GlobalAlloc, Layout, LayoutErr},
     ptr,
 };
 
-pub const fn align(size: usize) -> usize {
+use brk::{brk, sbrk};
+
+const BLOCK_SIZE: usize = std::mem::size_of::<Block>();
+
+const fn align(size: usize) -> usize {
     (((size - 1) >> 2) << 2) + 4
 }
 
@@ -24,11 +32,18 @@ pub struct Block {
 impl Block {
     pub fn find_block(last: Block, size: usize) -> Option<Block> {
         let b: Option<Block> = todo!();
-        while (!b.is_some() && (b.unwrap().free == BlockState::InUse && b.unwrap().size >= size)) {
+        while (b.is_none() && (b.unwrap().free == BlockState::InUse && b.unwrap().size >= size)) {
             last = b.unwrap();
             b = Some(unsafe { ptr::read(b.unwrap().next) });
         }
         b
+    }
+
+    pub fn extend_heap(last: Block, size: usize) -> Block {
+        let b: Option<Block>;
+        b = todo!(); // srbk(0) // returns the first heap ptr
+        if BLOCK_SIZE + size == 0 {}
+        panic!()
     }
 }
 
