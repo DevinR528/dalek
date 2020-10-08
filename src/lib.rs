@@ -54,12 +54,11 @@ pub enum BlockState {
 /// {O,o}<br>
 /// |)``)<br>
 /// HOOTIE!!<br>
-#[repr(C, packed)]
 #[derive(Copy, Clone, Debug)]
 pub struct Block {
     size: usize,
     free: BlockState,
-    data: *mut Block,
+    data: *mut u8,
     next: *mut Block,
 }
 
@@ -73,7 +72,7 @@ impl Block {
 
         let mut blk = Self {
             size,
-            data: ptr as *mut Block,
+            data: ptr,
             free: BlockState::InUse,
             next: ptr::null_mut(),
         };
@@ -83,7 +82,7 @@ impl Block {
     }
 
     pub fn as_raw(&self) -> *mut Block {
-        self.data
+        self.data as *mut Block
     }
 
     pub fn find_block(mut last: *mut Block, size: usize) -> *mut Block {
@@ -118,11 +117,11 @@ impl Block {
 
                 // ptr::write(old.next, b);
 
-                (*last).next = b.data;
+                (*last).next = b.data as *mut Block;
 
                 println!("{:?}", last);
             }
-            b.data
+            b.data as *mut Block
         } else {
             panic!("NEXT PAGE IS OOM??")
         }
@@ -137,7 +136,7 @@ pub unsafe fn malloc(size: usize) -> *mut u8 {
     if GLOBAL_BASE.is_null() {
         let blk = Block::extend_heap(ptr::null_mut(), size);
         GLOBAL_BASE = blk;
-        (*blk).data.add(1) as *mut u8
+        (*blk).data.add(1)
     } else {
         let blk_ptr = Block::find_block(GLOBAL_BASE, size);
         if blk_ptr.is_null() {
@@ -150,12 +149,12 @@ pub unsafe fn malloc(size: usize) -> *mut u8 {
         if (*blk_ptr).free == BlockState::InUse {
             println!("GLOBAL_BASE block");
             let new = Block::extend_heap(blk_ptr, size);
-            return (*new).data.add(1) as *mut u8;
+            return (*new).data.add(1);
         }
 
         println!("find block");
         (*blk_ptr).free = BlockState::InUse;
-        (*blk_ptr).data.add(1) as *mut u8
+        (*blk_ptr).data.add(1)
     }
 }
 
