@@ -26,8 +26,6 @@ impl BrkState {
         let old = self.current_brk();
         let expect = old.clone().offset(size);
 
-        println!("{:?} {:?}", old, expect);
-
         let new = brk(expect);
 
         if expect == new {
