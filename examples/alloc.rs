@@ -1,11 +1,10 @@
+#![feature(allocator_api, llvm_asm)]
+
 use ralloc::Ralloc;
 
 #[global_allocator]
-static GLOBAL: Ralloc = Ralloc { mmap: 0 };
+static GLOBAL: Ralloc = Ralloc;
 
 fn main() {
-    let mut v = Vec::new();
-    // This will allocate memory using the system allocator.
-    v.push(1);
-    println!("{:?}", v);
+    unsafe { assert!(!std::alloc::alloc(std::alloc::Layout::new::<u32>()).is_null()) }
 }

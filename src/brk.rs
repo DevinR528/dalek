@@ -6,9 +6,12 @@ static mut BRK: BrkState = BrkState {
     current: ptr::null(),
 };
 
-pub unsafe fn sbrk(ptr: *const u8) -> *const u8 {
-    BRK.sbrk(ptr as isize)
-        .expect("BreakState has gotten out of sync with memory")
+// TODO meaning full error (it's oom or nothing)
+/// The size of the requested allocation.
+///
+/// This must include the `ralloc::Block` size and any other meta data/optimization stuff.
+pub unsafe fn sbrk(size: isize) -> Result<*const u8, ()> {
+    BRK.sbrk(size)
 }
 
 struct BrkState {
@@ -22,6 +25,8 @@ impl BrkState {
     unsafe fn sbrk(&mut self, size: isize) -> Result<*const u8, ()> {
         let old = self.current_brk();
         let expect = old.clone().offset(size);
+
+        println!("{:?} {:?}", old, expect);
 
         let new = brk(expect);
 
