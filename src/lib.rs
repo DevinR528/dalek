@@ -1,160 +1,95 @@
 #![feature(allocator_api, asm, llvm_asm, nonnull_slice_from_raw_parts)]
 #![allow(unused)]
 
-mod brk;
+mod block;
+mod breaks;
 mod sc;
+mod util;
 
 use core::{
     alloc::{AllocError, AllocRef, GlobalAlloc, Layout, LayoutErr},
-    cmp,
+    cmp, fmt, mem,
     ptr::{self, NonNull},
 };
 
-use brk::{brk, sbrk};
+use block::{Block, BlockState};
+use breaks::{brk, sbrk};
 use sc as syscall;
-
-/// IMPORTANT the size of meta data.
-///
-/// ```notrust
-/// |---------|______________________________|
-///   metadata        the space requested
-/// ```
-const BLOCK_SIZE: usize = std::mem::size_of::<Block>();
+use util::{align, MIN_ALIGN};
 
 static mut GLOBAL_BASE: *mut Block = ptr::null_mut();
 
-#[inline]
-pub fn extra_brk(size: usize) -> usize {
-    // TODO: Tweak this.
-    /// The BRK multiplier.
-    ///
-    /// The factor determining the linear dependence between the minimum segment, and the acquired
-    /// segment.
-    const MULTIPLIER: usize = 2;
-    /// The minimum extra size to be BRK'd.
-    const MIN_EXTRA: usize = 1024;
-    /// The maximal amount of _extra_ bytes.
-    const MAX_EXTRA: usize = 65536;
+///
+/// # Safety
+/// It ain't but I'm working on it.
+unsafe fn free(ptr: *mut u8, layout: Layout) {
+    let mut blk = Block::get_block(ptr);
+    (*blk).free = BlockState::Free;
 
-    cmp::max(MIN_EXTRA, cmp::min(MULTIPLIER * size, MAX_EXTRA))
-}
-
-/// TODO this algo aligns to 32 bit ptr sizes; use `size_of::<usize>()` somehow to fix.
-const fn align(size: usize) -> isize {
-    ((((size - 1) >> 2) << 2) + 4) as isize
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BlockState {
-    InUse,
-    Free,
-}
-
-/// ,___,<br>
-/// {O,o}<br>
-/// |)``)<br>
-/// HOOTIE!!<br>
-#[derive(Copy, Clone, Debug)]
-pub struct Block {
-    size: usize,
-    free: BlockState,
-    data: *mut u8,
-    next: *mut Block,
-}
-
-impl Block {
-    ///
-    /// # Safety
-    /// It ain't
-    pub unsafe fn from_raw(ptr: *mut u8, size: usize) -> Self {
-        println!("FROM RAW {:?}", ptr);
-        println!("blk size {:?}", align(BLOCK_SIZE));
-
-        let mut blk = Self {
-            size,
-            data: ptr,
-            free: BlockState::InUse,
-            next: ptr::null_mut(),
-        };
-
-        ptr::write(ptr as *mut _, blk);
-        blk
+    // Can we combine the previous block with the "current" block
+    if !(*blk).prev.is_null() && (*(*blk).prev).free == BlockState::Free {
+        blk = Block::absorb((*blk).prev);
     }
 
-    pub fn as_raw(&self) -> *mut Block {
-        self.data as *mut Block
-    }
-
-    pub fn find_block(mut last: *mut Block, size: usize) -> *mut Block {
-        unsafe {
-            let mut b = GLOBAL_BASE;
-            println!("GB ptr {:?}", b);
-            // It's gotta be Some and we keep looping if InUse && our blk is to small
-            while !(b.is_null() || (*b).free == BlockState::Free && (*b).size >= size) {
-                last = b;
-                if (*b).next.is_null() {
-                    return b;
-                }
-                b = (*b).next as *mut _;
-            }
-            b
-        }
-    }
-
-    ///
-    /// # Safety
-    /// It ain't
-    pub unsafe fn extend_heap(last: *mut Block, size: usize) -> *mut Block {
-        // Returns pointer to the next free chunk
-        let mut b = sbrk(align(BLOCK_SIZE))
-            .ok()
-            .map(|ptr| Block::from_raw(ptr as *mut _, size))
-            .unwrap();
-
-        if sbrk(align(BLOCK_SIZE + size)).is_ok() {
-            if !last.is_null() {
-                println!("RIZAW {:?}", b.as_raw());
-
-                // ptr::write(old.next, b);
-
-                (*last).next = b.data as *mut Block;
-
-                println!("{:?}", last);
-            }
-            b.data as *mut Block
+    // Can we combine the next block with "current"
+    if !(*blk).next.is_null() {
+        Block::absorb(blk);
+    } else {
+        if !(*blk).prev.is_null() {
+            (*(*blk).prev).next = ptr::null_mut();
         } else {
-            panic!("NEXT PAGE IS OOM??")
+            dbg!(&(*GLOBAL_BASE));
+            GLOBAL_BASE = ptr::null_mut();
         }
+        // Reset the end of the heap to the last block we have
+        brk(blk as *const u8);
     }
 }
 
 ///
 /// # Safety
-/// It ain't
-pub unsafe fn malloc(size: usize) -> *mut u8 {
+/// It ain't but I'm working on it.
+unsafe fn malloc(layout: Layout) -> *mut u8 {
+    let size = layout.size();
     // This is our first alloc
     if GLOBAL_BASE.is_null() {
         let blk = Block::extend_heap(ptr::null_mut(), size);
         GLOBAL_BASE = blk;
-        (*blk).data.add(1)
+        (*blk).data.add(1) as *mut u8
     } else {
         let blk_ptr = Block::find_block(GLOBAL_BASE, size);
         if blk_ptr.is_null() {
-            panic!()
+            panic!("Found null pointer")
         }
 
-        // TODO
-        // We have most likely returned the GLOBAL_BASE block
-        // or we need to extend as we have used all our blocks??
+        dbg!(*blk_ptr);
+        dbg!(size);
+
+        let blk_size = (*blk_ptr).size;
+        if ((blk_size as isize - size as isize) >= (block::BLOCK_SIZE + 4) as isize) {
+            Block::split_block(blk_ptr, size);
+        }
+
+        // We need to extend the heap
         if (*blk_ptr).free == BlockState::InUse {
-            println!("GLOBAL_BASE block");
             let new = Block::extend_heap(blk_ptr, size);
-            return (*new).data.add(1);
+            return (*new).data.add(1) as *mut u8;
         }
 
-        println!("find block");
         (*blk_ptr).free = BlockState::InUse;
-        (*blk_ptr).data.add(1)
+        (*blk_ptr).data.add(1) as *mut u8
+    }
+}
+
+// TODO
+unsafe fn align_malloc(layout: Layout) -> *mut u8 {
+    let mut out = ptr::null_mut();
+    let align = layout.align().max(crate::mem::size_of::<usize>());
+    let ret = libc::posix_memalign(&mut out, align, layout.size());
+    if ret != 0 {
+        ptr::null_mut()
+    } else {
+        out as *mut u8
     }
 }
 
@@ -162,30 +97,37 @@ pub struct Ralloc;
 
 unsafe impl GlobalAlloc for Ralloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        println!("alloc {:?}", layout);
-        malloc(layout.size())
+        // dbg!(&layout);
+        eprintln!("ALLOC {}", layout.size());
+        if layout.align() <= MIN_ALIGN && layout.align() <= layout.size() {
+            malloc(layout)
+        } else {
+            // ALIGN we have a large enough value to
+            dbg!(malloc(layout))
+        }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        println!("{:?}", layout);
-        malloc(layout.size())
+        let ptr = self.alloc(layout);
+        if !ptr.is_null() {
+            ptr::write_bytes(ptr, 0, layout.size());
+        }
+        ptr
     }
 
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        println!("{:?}", layout);
-        malloc(layout.size())
-    }
+    // unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+    //     libc::realloc(ptr as *mut std::ffi::c_void, layout.size()) as *mut u8
+    // }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        println!("{:?}", layout);
-        panic!("its a start")
+        free(ptr, layout)
     }
 }
 
 unsafe impl AllocRef for &Ralloc {
     fn alloc(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         Ok(unsafe {
-            let ptr = NonNull::new_unchecked(malloc(layout.size()));
+            let ptr = NonNull::new_unchecked(malloc(layout));
             NonNull::slice_from_raw_parts(ptr, layout.size())
         })
     }
@@ -193,7 +135,7 @@ unsafe impl AllocRef for &Ralloc {
     fn alloc_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         println!("{:?}", layout);
         Ok(unsafe {
-            let ptr = NonNull::new_unchecked(malloc(layout.size()));
+            let ptr = NonNull::new_unchecked(malloc(layout));
             NonNull::slice_from_raw_parts(ptr, layout.size())
         })
     }
@@ -227,15 +169,11 @@ mod tests {
     #[test]
     fn it_works() {
         unsafe {
-            // println!("{:?}", libc::malloc(std::mem::size_of::<u8>()) as *const u8);
-
-            println!("ONE MALLOC {:?}", malloc(512));
+            println!("ONE MALLOC {:?}", malloc(Layout::new::<u32>()));
             println!("{:?}", (*GLOBAL_BASE));
 
-            println!("TWO MALLOC {:?}", malloc(512));
+            println!("TWO MALLOC {:?}", malloc(Layout::new::<u32>()));
             println!("{:?}", (*GLOBAL_BASE));
-
-            // ptr::swap((*GLOBAL_BASE).next, )
         }
     }
 }
