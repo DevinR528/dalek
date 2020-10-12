@@ -159,6 +159,8 @@ impl Block {
                 if !(*ptr).next.is_null() {
                     (*(*ptr).next).prev = ptr;
                 }
+                dbg!(&*crate::GLOBAL_BASE);
+                dbg!(&ptr);
             }
         }
         ptr
@@ -184,8 +186,8 @@ impl Block {
         (*ptr).size = size;
         // new is Block.data (pointer to itself) so this works
         (*ptr).next = new;
-        dbg!(*ptr);
-        dbg!(*new);
+        dbg!(&*crate::GLOBAL_BASE);
+        dbg!(size);
     }
 
     pub unsafe fn copy_block(src: *mut Block, dst: *mut Block, count: usize) {
