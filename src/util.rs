@@ -1,4 +1,4 @@
-use std::{cmp, mem, ptr};
+use core::{cmp, mem, ptr};
 
 // The minimum alignment guaranteed by the architecture. This value is used to
 // add fast paths for low alignment values.

@@ -1,6 +1,10 @@
+#![no_std]
 #![feature(allocator_api, llvm_asm)]
 
-use std::ptr;
+extern crate alloc;
+
+use alloc::vec::Vec;
+use core::ptr;
 
 use ralloc::Ralloc;
 
@@ -12,7 +16,8 @@ fn main() {
     v.push(1u32);
     v.push(2);
     v.push(3);
-    assert!(!v.is_empty());
+    // assert!(!v.is_empty());
+
     // unsafe {
     //     {
     //         let ptr = std::alloc::alloc(std::alloc::Layout::new::<u32>());

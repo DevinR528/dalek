@@ -1,6 +1,5 @@
 #![feature(allocator_api, asm, llvm_asm, nonnull_slice_from_raw_parts)]
 #![allow(unused)]
-
 mod block;
 mod breaks;
 mod mmap;
@@ -18,6 +17,26 @@ use block::{Block, BlockState};
 use breaks::{brk, sbrk};
 use sc as syscall;
 use util::{align, MIN_ALIGN};
+
+macro_rules! dbg {
+    ($val:expr) => {
+        match $val {
+            tmp => {
+                #[cfg(debug_assertions)]
+                {
+                    eprintln!(
+                        "[{}:{}] {} = {:#?}",
+                        file!(),
+                        line!(),
+                        stringify!($val),
+                        &tmp
+                    );
+                }
+                tmp
+            }
+        }
+    };
+}
 
 static mut GLOBAL_BASE: *mut Block = ptr::null_mut();
 
@@ -141,6 +160,7 @@ unsafe impl GlobalAlloc for Ralloc {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        eprintln!("ALLOC ZERO {}", layout.size());
         let ptr = self.alloc(layout);
         if !ptr.is_null() {
             ptr::write_bytes(ptr, 0, layout.size());
@@ -149,10 +169,12 @@ unsafe impl GlobalAlloc for Ralloc {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        eprintln!("REALLOC {}", layout.size());
         realloc(ptr, layout, new_size)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        eprintln!("DEALLOC {:?} {}", ptr, layout.size());
         free(ptr, layout)
     }
 }

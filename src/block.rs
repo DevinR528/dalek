@@ -104,10 +104,13 @@ impl Block {
             // It's gotta be Some and we keep looping if InUse && our blk is to small
             while !(b.is_null() || (*b).free == BlockState::Free && (*b).size >= size) {
                 if (*b).next.is_null() {
+                    dbg!(*b);
+
                     return b;
                 }
                 b = (*b).next as *mut _;
             }
+            dbg!(*b);
             b
         }
     }
@@ -134,6 +137,9 @@ impl Block {
         }
     }
 
+    /// Returns a pointer to the `Block` that is connected to the data's memory block.
+    ///
+    /// In other words you give us the pointer to your data we get the metadata we created.
     ///
     /// # Safety
     /// It ain't
