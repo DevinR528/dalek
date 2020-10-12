@@ -1,6 +1,6 @@
 //! Make a request to mmap 🎶 🕺🕺 🎶
 
-use std::{ptr, sync::Mutex};
+use core::ptr;
 
 use crate::syscall;
 
@@ -99,9 +99,9 @@ pub unsafe fn _mmap(ptr: *const u8, size: usize) -> *const u8 {
 fn mmap_call() {
     unsafe {
         let ptr = _mmap(ptr::null(), 1024) as *mut u8;
-        println!("{:?}", ptr);
+        // println!("{:?}", ptr);
         let ptr2 = _mmap(ptr::null(), 1024) as *mut u8;
-        println!("{:?}", ptr2);
+        // println!("{:?}", ptr2);
 
         // for i in 0..1025 {
         //     ptr::write(ptr.add(i), 0);

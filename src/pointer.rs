@@ -1,4 +1,4 @@
-use std::{
+use core::{
     marker, mem,
     ptr::{self, NonNull},
 };
@@ -61,7 +61,7 @@ mod test {
     fn pointer_null() {
         struct Thing {
             a: usize,
-            b: String,
+            b: usize,
         }
         let ptr = Pointer::<Thing>::empty();
 

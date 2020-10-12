@@ -1,6 +1,6 @@
 //! These are the breaks 🎶 🕺🕺 🎶
 
-use std::{ptr, sync::Mutex};
+use core::ptr;
 
 use crate::syscall;
 
