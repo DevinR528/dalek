@@ -61,8 +61,12 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
     if GLOBAL_BASE.is_null() {
         let blk = Block::extend_heap(ptr::null_mut(), size);
         GLOBAL_BASE = blk;
+        dbg!(*GLOBAL_BASE);
+
         (*blk).data.add(1) as *mut u8
     } else {
+        dbg!(*GLOBAL_BASE);
+
         // watch this when fixing ptr arithmetic this size is the data size not total
         let blk_ptr = Block::find_block(GLOBAL_BASE, size);
         if blk_ptr.is_null() {
@@ -85,6 +89,7 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
         }
 
         (*blk_ptr).free = BlockState::InUse;
+        dbg!(*GLOBAL_BASE);
         (*blk_ptr).data.add(1) as *mut u8
     }
 }
@@ -113,12 +118,7 @@ unsafe fn realloc(ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // SAFETY: the previously allocated block cannot overlap the newly allocated block.
         // The safety contract for `dealloc` must be upheld by the caller.
         ptr::copy_nonoverlapping(ptr, new_ptr, cmp::min(layout.size(), new_size));
-        // Block::copy_block(
-        //     // This is dumb probably should just use copy and not convert u8 -> Block -> u8
-        //     ptr.cast::<Block>().offset(-1), // We have a ptr to the end of `Block`, back it up
-        //     new_ptr.cast::<Block>().offset(-1), // Same here jump back to `Block`
-        //     new_size,
-        // );
+
         free(ptr, layout);
     }
     dbg!(*GLOBAL_BASE);
