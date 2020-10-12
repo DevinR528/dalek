@@ -79,9 +79,10 @@ impl Block {
         unsafe { (*self.data).free = BlockState::Free };
     }
 
-    pub fn set_next(&self) {
-        unsafe { (*self.data).free = BlockState::Free };
+    pub fn set_next(&self, next: *mut Block) {
+        unsafe { (*self.data).next = next };
     }
+
     ///
     /// # Safety
     /// It ain't
@@ -137,7 +138,7 @@ impl Block {
         }
     }
 
-    /// Returns a pointer to the `Block` that is connected to the data's memory block.
+    /// Returns a pointer to the `Block` that is connected to the given memory chunk.
     ///
     /// In other words you give us the pointer to your data we get the metadata we created.
     ///
