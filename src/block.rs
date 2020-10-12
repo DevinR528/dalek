@@ -6,6 +6,7 @@ use core::{
 
 use crate::{
     breaks::{brk, sbrk},
+    pointer::Pointer,
     sc as syscall,
     util::{align, MIN_ALIGN},
 };
@@ -70,6 +71,17 @@ impl fmt::Debug for Block {
 }
 
 impl Block {
+    pub fn as_raw(&self) -> *mut Block {
+        self.data
+    }
+
+    pub fn mark_free(&self) {
+        unsafe { (*self.data).free = BlockState::Free };
+    }
+
+    pub fn set_next(&self) {
+        unsafe { (*self.data).free = BlockState::Free };
+    }
     ///
     /// # Safety
     /// It ain't
@@ -83,10 +95,6 @@ impl Block {
         };
         ptr::write(ptr as *mut _, blk);
         blk
-    }
-
-    pub fn as_raw(&self) -> *mut Block {
-        self.data as *mut Block
     }
 
     pub fn find_block(mut last: *mut Block, size: usize) -> *mut Block {
@@ -157,10 +165,10 @@ impl Block {
     }
 
     /// Take the existing Block and split it adding the new block after the
-    /// existing one.
+    /// existing one. The data is kept in `ptr`, `new` will be `BlockState::Free`.
     ///
     /// # Safety
-    /// It ain't, I'm working on it.
+    /// * `ptr`'s `Block.size` must be larger than `size + BLOCK_SIZE`
     pub unsafe fn split_block(ptr: *mut Block, size: usize) {
         let new = Block::from_raw(
             ptr.cast::<u8>().add(size + BLOCK_SIZE),
@@ -168,11 +176,19 @@ impl Block {
             ptr,
         )
         .as_raw();
+        // New's next is the old ptr's next
         (*new).next = (*ptr).next;
+        // Since we are not filling the new block mark it as free
+        (*new).free = BlockState::Free;
 
         (*ptr).size = size;
-        (*ptr).next = new; // new is Block.data (pointer to itself)
+        // new is Block.data (pointer to itself) so this works
+        (*ptr).next = new;
         dbg!(*ptr);
         dbg!(*new);
+    }
+
+    pub unsafe fn copy_block(src: *mut Block, dst: *mut Block, count: usize) {
+        ptr::copy_nonoverlapping(src.add(1).cast::<u8>(), dst.add(1).cast::<u8>(), count)
     }
 }

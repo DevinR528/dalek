@@ -3,6 +3,8 @@
 
 mod block;
 mod breaks;
+mod mmap;
+mod pointer;
 mod sc;
 mod util;
 
@@ -49,6 +51,10 @@ unsafe fn free(ptr: *mut u8, layout: Layout) {
 ///
 /// # Safety
 /// It ain't but I'm working on it.
+///
+/// All alignment and size calculation is done in `Block::extend_heap` so
+/// if and aligned pointer is needed you must do it again.
+/// FIXME the above should be encapsulated.
 unsafe fn malloc(layout: Layout) -> *mut u8 {
     let size = layout.size();
     // This is our first alloc
@@ -57,14 +63,16 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
         GLOBAL_BASE = blk;
         (*blk).data.add(1) as *mut u8
     } else {
+        // watch this when fixing ptr arithmetic this size is the data size not total
         let blk_ptr = Block::find_block(GLOBAL_BASE, size);
         if blk_ptr.is_null() {
             panic!("Found null pointer")
         }
 
-        dbg!(*blk_ptr);
-        dbg!(size);
+        // dbg!(*blk_ptr);
+        // dbg!(size);
 
+        // PTR MATH fix
         let blk_size = (*blk_ptr).size;
         if ((blk_size as isize - size as isize) >= (block::BLOCK_SIZE + 4) as isize) {
             Block::split_block(blk_ptr, size);
@@ -93,6 +101,31 @@ unsafe fn align_malloc(layout: Layout) -> *mut u8 {
     }
 }
 
+unsafe fn realloc(ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+    eprintln!("REALLOC {:?} {:?}", ptr, layout);
+    // SAFETY: the caller must ensure that the `new_size` does not overflow.
+    // `layout.align()` comes from a `Layout` and is thus guaranteed to be valid.
+    let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
+    // SAFETY: the caller must ensure that `new_layout` is greater than zero.
+    let new_ptr = malloc(new_layout);
+
+    if !new_ptr.is_null() {
+        // SAFETY: the previously allocated block cannot overlap the newly allocated block.
+        // The safety contract for `dealloc` must be upheld by the caller.
+        ptr::copy_nonoverlapping(ptr, new_ptr, cmp::min(layout.size(), new_size));
+        // Block::copy_block(
+        //     // This is dumb probably should just use copy and not convert u8 -> Block -> u8
+        //     ptr.cast::<Block>().offset(-1), // We have a ptr to the end of `Block`, back it up
+        //     new_ptr.cast::<Block>().offset(-1), // Same here jump back to `Block`
+        //     new_size,
+        // );
+        free(ptr, layout);
+    }
+    dbg!(*GLOBAL_BASE);
+    dbg!(*Block::get_block(new_ptr));
+    new_ptr
+}
+
 pub struct Ralloc;
 
 unsafe impl GlobalAlloc for Ralloc {
@@ -115,9 +148,9 @@ unsafe impl GlobalAlloc for Ralloc {
         ptr
     }
 
-    // unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-    //     libc::realloc(ptr as *mut std::ffi::c_void, layout.size()) as *mut u8
-    // }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        realloc(ptr, layout, new_size)
+    }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         free(ptr, layout)
@@ -169,8 +202,8 @@ mod tests {
     #[test]
     fn it_works() {
         unsafe {
-            println!("ONE MALLOC {:?}", malloc(Layout::new::<u32>()));
-            println!("{:?}", (*GLOBAL_BASE));
+            println!("ONE MALLOC {:?}", malloc(Layout::new::<usize>()));
+            println!("{:#?}", (*GLOBAL_BASE));
 
             println!("TWO MALLOC {:?}", malloc(Layout::new::<u32>()));
             println!("{:?}", (*GLOBAL_BASE));
