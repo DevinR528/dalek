@@ -54,7 +54,7 @@ impl fmt::Debug for Block {
                 if self.next.is_null() {
                     &"null"
                 } else {
-                    unsafe { &self.next }
+                    unsafe { &*self.next.get() }
                 },
             )
             .field(
@@ -75,62 +75,59 @@ impl Block {
         self.data.get()
     }
 
-    pub fn mark_free(&self) {
-        unsafe { (*self.data.get()).free = BlockState::Free };
-    }
-
-    pub fn set_next(&self) {
-        unsafe { (*self.data.get()).free = BlockState::Free };
-    }
     ///
     /// # Safety
     /// It ain't
-    pub unsafe fn from_raw(ptr: *mut u8, size: usize, prev: *mut Block) -> Self {
+    pub unsafe fn from_raw(ptr: *mut u8, size: usize, prev: Pointer<Block>) -> Self {
         let mut blk = Self {
             size,
             data: Pointer::new(ptr as *mut Block),
             free: BlockState::InUse,
             next: Pointer::empty(),
-            prev: if prev.is_null() {
-                Pointer::empty()
-            } else {
-                Pointer::new(prev)
-            },
+            prev,
         };
-        ptr::write(ptr as *mut _, blk);
+        ptr::write(ptr as *mut _, blk.clone());
         blk
     }
 
-    pub fn find_block(mut last: *mut Block, size: usize) -> *mut Block {
+    pub fn find_block(mut last: *mut Block, size: usize) -> Pointer<Block> {
         unsafe {
             let mut b = crate::GLOBAL_BASE;
+
+            if b.is_null() {
+                return Pointer::empty();
+            }
+            let mut b = Pointer::new(b);
             // println!("GB ptr {:?}", b);
             // It's gotta be Some and we keep looping if InUse && our blk is to small
-            while !(b.is_null() || (*b).free == BlockState::Free && (*b).size >= size) {
-                if (*b).next.is_null() {
+            while !(b.is_null() || b.is_free() && b.size() >= size) {
+                if b.next().is_null() {
                     return b;
                 }
-                b = (*b).next as *mut _;
+                b = b.next();
             }
             b
         }
     }
 
+    /// Shift the heap break and create a new `Block` at the beginning of the break.
     ///
+    /// The `Block` that is returned is assumed in use, not free.
     /// # Safety
     /// It ain't
-    pub unsafe fn extend_heap(last: *mut Block, size: usize) -> *mut Block {
+    pub unsafe fn extend_heap(last: Pointer<Block>, size: usize) -> Pointer<Block> {
         let need_size = align(BLOCK_SIZE + size);
         let size = need_size as usize - BLOCK_SIZE;
         // Returns pointer to the next free chunk
         let mut b = sbrk(BLOCK_SIZE as isize)
             .ok()
-            .map(|ptr| Block::from_raw(ptr as *mut _, size, last))
+            // `Block::from_raw` assumes the Block is InUse
+            .map(|ptr| Block::from_raw(ptr as *mut _, size, last.clone()))
             .unwrap();
 
         if sbrk(need_size).is_ok() {
             if !last.is_null() {
-                (*last).next = b.data;
+                (*last.get()).next = b.data.clone();
             }
             b.data
         } else {
@@ -141,28 +138,30 @@ impl Block {
     ///
     /// # Safety
     /// It ain't
-    pub unsafe fn get_block(find_ptr: *mut u8) -> *mut Block {
+    pub unsafe fn get_block(find_ptr: *mut u8) -> Pointer<Block> {
         // TODO validate ptr?
-        find_ptr.cast::<Block>().offset(-1)
+        Pointer::new(find_ptr.cast::<Block>().offset(-1))
     }
 
     /// Merge the `next` block with current and set `next`s `prev` pointer to
     /// current
     /// # Safety
     /// It ain't
-    pub unsafe fn absorb(ptr: *mut Block) -> *mut Block {
+    pub unsafe fn absorb(ptr: Pointer<Block>) -> Pointer<Block> {
         if !ptr.is_null() {
-            let mut blk = *ptr;
+            // let mut blk = *ptr;
             // If we have a non null and free block absorb it
-            if !blk.next.is_null() && (*blk.next).free == BlockState::Free {
-                dbg!(*ptr);
-                (*ptr).size += BLOCK_SIZE + (*(*ptr).next).size;
-                (*ptr).next = (*(*ptr).next).next;
+            if !ptr.is_null() && ptr.is_free() {
+                ptr.add_size(BLOCK_SIZE + ptr.next().size());
+                // (*ptr).size += BLOCK_SIZE + (*(*ptr).next).size;
+                // (*ptr).next = (*(*ptr).next).next;
+                ptr.set_next(ptr.next().next());
 
                 // Now set "current" to prev for the newly "next" blk
-                if !(*ptr).next.is_null() {
-                    (*(*ptr).next).prev = ptr;
+                if !ptr.next().is_null() {
+                    ptr.next().set_prev(ptr.clone());
                 }
+                dbg!(&*ptr.get());
             }
         }
         ptr
@@ -173,23 +172,25 @@ impl Block {
     ///
     /// # Safety
     /// * `ptr`'s `Block.size` must be larger than `size + BLOCK_SIZE`
-    pub unsafe fn split_block(ptr: *mut Block, size: usize) {
-        let new = Block::from_raw(
-            ptr.cast::<u8>().add(size + BLOCK_SIZE),
-            (*ptr).size - size - BLOCK_SIZE, // This is probably wrong also above
-            ptr,
-        )
-        .as_raw();
+    pub unsafe fn split_block(ptr: Pointer<Block>, size: usize) {
+        let new = Pointer::new(
+            Block::from_raw(
+                ptr.cast::<u8>().add(size + BLOCK_SIZE).get(),
+                ptr.size() - size - BLOCK_SIZE, // This is probably wrong also above
+                ptr.clone(),
+            )
+            .as_raw(),
+        );
         // New's next is the old ptr's next
-        (*new).next = (*ptr).next;
+        new.set_next(ptr.next());
         // Since we are not filling the new block mark it as free
-        (*new).free = BlockState::Free;
+        new.mark_free();
 
-        (*ptr).size = size;
+        ptr.set_size(size);
         // new is Block.data (pointer to itself) so this works
-        (*ptr).next = new;
-        dbg!(*ptr);
-        dbg!(*new);
+        ptr.set_next(new);
+        dbg!(&*crate::GLOBAL_BASE);
+        dbg!(size);
     }
 
     pub unsafe fn copy_block(src: *mut Block, dst: *mut Block, count: usize) {

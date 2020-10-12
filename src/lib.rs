@@ -6,17 +6,22 @@ mod breaks;
 mod mmap;
 mod pointer;
 mod sc;
+mod semaphore;
 mod util;
 
 use core::{
     alloc::{AllocError, AllocRef, GlobalAlloc, Layout, LayoutErr},
     cmp, fmt, mem,
+    ops::DerefMut,
     ptr::{self, NonNull},
+    sync::atomic::AtomicBool,
 };
 
 use block::{Block, BlockState};
 use breaks::{brk, sbrk};
+use pointer::Pointer;
 use sc as syscall;
+use semaphore::Semaphore;
 use util::{align, MIN_ALIGN};
 
 static mut GLOBAL_BASE: *mut Block = ptr::null_mut();
@@ -25,27 +30,29 @@ static mut GLOBAL_BASE: *mut Block = ptr::null_mut();
 /// # Safety
 /// It ain't but I'm working on it.
 unsafe fn free(ptr: *mut u8, layout: Layout) {
+    eprintln!("FREE {:?}", ptr);
     let mut blk = Block::get_block(ptr);
-    (*blk).free = BlockState::Free;
+    blk.mark_free();
 
     // Can we combine the previous block with the "current" block
-    if !(*blk).prev.is_null() && (*(*blk).prev).free == BlockState::Free {
-        blk = Block::absorb((*blk).prev);
+    if !blk.prev().is_null() && blk.prev().is_free() {
+        blk = Block::absorb(blk.prev());
     }
 
     // Can we combine the next block with "current"
-    if !(*blk).next.is_null() {
+    if !blk.next().is_null() {
         Block::absorb(blk);
     } else {
-        if !(*blk).prev.is_null() {
-            (*(*blk).prev).next = ptr::null_mut();
+        if !blk.prev().is_null() {
+            blk.prev().set_next(Pointer::empty());
         } else {
-            dbg!(&(*GLOBAL_BASE));
+            dbg!(&*GLOBAL_BASE);
             GLOBAL_BASE = ptr::null_mut();
         }
         // Reset the end of the heap to the last block we have
-        brk(blk as *const u8);
+        brk(blk.get() as *const u8);
     }
+    dbg!(&*GLOBAL_BASE);
 }
 
 ///
@@ -59,9 +66,9 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
     let size = layout.size();
     // This is our first alloc
     if GLOBAL_BASE.is_null() {
-        let blk = Block::extend_heap(ptr::null_mut(), size);
-        GLOBAL_BASE = blk;
-        (*blk).data.add(1) as *mut u8
+        let blk = Block::extend_heap(Pointer::empty(), size);
+        GLOBAL_BASE = blk.get();
+        blk.add(1).get() as *mut u8
     } else {
         // watch this when fixing ptr arithmetic this size is the data size not total
         let blk_ptr = Block::find_block(GLOBAL_BASE, size);
@@ -73,19 +80,22 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
         // dbg!(size);
 
         // PTR MATH fix
-        let blk_size = (*blk_ptr).size;
+        let blk_size = blk_ptr.size();
         if ((blk_size as isize - size as isize) >= (block::BLOCK_SIZE + 4) as isize) {
-            Block::split_block(blk_ptr, size);
+            eprintln!("split");
+            Block::split_block(blk_ptr.clone(), size);
         }
 
-        // We need to extend the heap
-        if (*blk_ptr).free == BlockState::InUse {
+        // We need to extend the heap, not enough free space
+        if !blk_ptr.is_free() {
+            eprintln!("extend");
+            dbg!(&*GLOBAL_BASE);
             let new = Block::extend_heap(blk_ptr, size);
-            return (*new).data.add(1) as *mut u8;
+            return new.add(1).get() as *mut u8;
         }
 
-        (*blk_ptr).free = BlockState::InUse;
-        (*blk_ptr).data.add(1) as *mut u8
+        blk_ptr.mark_used();
+        blk_ptr.add(1).get() as *mut u8
     }
 }
 
@@ -121,8 +131,8 @@ unsafe fn realloc(ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // );
         free(ptr, layout);
     }
-    dbg!(*GLOBAL_BASE);
-    dbg!(*Block::get_block(new_ptr));
+    dbg!(&*GLOBAL_BASE);
+    dbg!(&*Block::get_block(new_ptr).get());
     new_ptr
 }
 
@@ -130,7 +140,6 @@ pub struct Ralloc;
 
 unsafe impl GlobalAlloc for Ralloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // dbg!(&layout);
         eprintln!("ALLOC {}", layout.size());
         if layout.align() <= MIN_ALIGN && layout.align() <= layout.size() {
             malloc(layout)
@@ -141,6 +150,7 @@ unsafe impl GlobalAlloc for Ralloc {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        eprintln!("ALLOC ZERO {}", layout.size());
         let ptr = self.alloc(layout);
         if !ptr.is_null() {
             ptr::write_bytes(ptr, 0, layout.size());
@@ -153,6 +163,7 @@ unsafe impl GlobalAlloc for Ralloc {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        eprintln!("DEALLOC {}", layout.size());
         free(ptr, layout)
     }
 }
@@ -203,7 +214,7 @@ mod tests {
     fn it_works() {
         unsafe {
             println!("ONE MALLOC {:?}", malloc(Layout::new::<usize>()));
-            println!("{:#?}", (*GLOBAL_BASE));
+            println!("{:#?}", (GLOBAL_BASE));
 
             println!("TWO MALLOC {:?}", malloc(Layout::new::<u32>()));
             println!("{:?}", (*GLOBAL_BASE));
