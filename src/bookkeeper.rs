@@ -1,5 +1,5 @@
 use core::{
-    fmt, mem,
+    cmp, fmt, mem,
     ops::{Deref, DerefMut},
     ptr::{self, NonNull},
     slice,
@@ -11,6 +11,9 @@ use crate::{
     util::{align, extra_brk, MIN_ALIGN},
 };
 
+pub const SPLIT_FACTOR: usize = 2;
+
+/// The size of our `Block` aligned to 4 bytes.
 pub const BLOCK_ALIGN: usize = align(mem::size_of::<Block>()) as usize;
 
 pub enum EmptyResult {
@@ -22,6 +25,11 @@ impl EmptyResult {
     #[inline]
     pub fn is_err(&self) -> bool {
         matches!(self, Self::Err)
+    }
+
+    #[inline]
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Ok)
     }
 
     #[inline]
@@ -117,6 +125,22 @@ impl<T> RawSlice<T> {
         }
     }
 
+    pub fn insert(&mut self, idx: usize, item: T) {
+        assert!(idx < self.len && self.cap > self.len + 1);
+
+        unsafe {
+            for idx in idx..self.len {
+                ptr::write(
+                    self.ptr.as_ptr().add(idx),
+                    ptr::read(self.ptr.as_ptr().add(idx + 1)),
+                );
+            }
+            ptr::write(self.ptr.as_ptr().add(idx), item);
+
+            self.len += 1;
+        }
+    }
+
     pub fn resize(&mut self, new_ptr: *mut T, new_cap: usize) -> EmptyResult {
         if self.len <= new_cap {
             unsafe {
@@ -136,7 +160,7 @@ impl<T> RawSlice<T> {
 
 impl<T: fmt::Debug> fmt::Debug for RawSlice<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", &self)
+        write!(f, "{:?}", self.deref())
     }
 }
 
@@ -147,8 +171,43 @@ impl<T: PartialEq> PartialEq<[T]> for RawSlice<T> {
 }
 
 impl RawSlice<Block> {
+    /// Pop `Block`s off the end until we have found a `Block`
+    /// of suitable `size` to fit the request.
+    ///
+    /// This should only be called for the `free` `RawSlice` of `BookKeeper`.
     pub fn find(&mut self, size: usize) -> Option<Block> {
-        todo!()
+        let mut blk: Option<Block> = None;
+        while let Some(mut next) = self.pop() {
+            if let Some(curr) = &mut blk {
+                // Absorb the next block and zero it out
+                // adding `next.size` to `curr.size` if curr.size is to small
+                if curr.size >= size {
+                    // TODO: I think we want to split first to keep the split blocks
+                    // next to each other? This also probably does not matter so who knows?
+                    // Zeroing out the split block just incase may be helpful again who knows?
+
+                    // If the block is "too" large split it into 2 equal
+                    // sized blocks
+                    if curr.size > size * SPLIT_FACTOR {
+                        self.push(curr.split(size));
+                    }
+
+                    // Put the `next` Block back since we won't use it
+                    // This check is probably redundant TODO
+                    if Some(&curr) != Some(&&mut next) {
+                        self.push(next).unwrap();
+                    }
+
+                    break;
+                } else {
+                    curr.merge_right(next);
+                }
+            } else {
+                blk = Some(next);
+            }
+        }
+
+        blk
     }
 }
 
@@ -182,10 +241,27 @@ impl<T> DerefMut for RawSlice<T> {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct Block {
     size: usize,
     data: NonNull<u8>,
     free: bool,
+}
+
+/// Compare the blocks address.
+impl PartialOrd for Block {
+    #[inline]
+    fn partial_cmp(&self, other: &Block) -> Option<cmp::Ordering> {
+        self.data.as_ptr().partial_cmp(&other.data.as_ptr())
+    }
+}
+
+/// Compare the blocks address.
+impl Ord for Block {
+    #[inline]
+    fn cmp(&self, other: &Block) -> cmp::Ordering {
+        self.data.as_ptr().cmp(&other.data.as_ptr())
+    }
 }
 
 impl Block {
@@ -213,12 +289,29 @@ impl Block {
 
     pub fn merge_right(&mut self, next: Block) -> EmptyResult {
         if !next.is_null() {
+            // TODO make this config-able?
+            // Zero out the bytes of the next block before we merge
             unsafe {
                 ptr::write_bytes(next.data.as_ptr(), 0, next.size);
             }
         }
         self.size += next.size;
         EmptyResult::Ok
+    }
+
+    pub fn split(&mut self, size: usize) -> Block {
+        // Since this is aligned to 4 bytes there will never be a remainder
+        // let new_size = self.size >> 1;
+        let new_size = self.size / SPLIT_FACTOR;
+
+        // but just incase
+        assert_eq!(self.size % 2, 0);
+        assert!(new_size >= size);
+
+        let new_blk = unsafe { Block::new(self.data.as_ptr().add(new_size), new_size) };
+        self.size = new_size;
+
+        new_blk
     }
 }
 
@@ -237,45 +330,71 @@ impl BookKeeper {
         }
     }
 
+    /// `size` needs to be aligned or pre whatevered before this is called.
+    ///
+    /// # Safety
+    ///
+    /// This will panic on OOM or if sbrk fails in anyother way.
     pub unsafe fn extend_heap(&mut self, size: usize) -> *mut u8 {
         // Returns pointer to the next free chunk
         let mut b = sbrk(0).map(|ptr| Block::new(ptr as *mut _, size)).unwrap();
 
         if sbrk(size as isize).is_ok() {
             let data = b.raw_data();
-            self.used.push(b);
+            // Pretty sure we should __NEVER__ find the same pointer when allocating from
+            // sbrk or mmap...
+            let idx = self.used.binary_search(&b).unwrap_err();
+            self.used.insert(idx, b);
             data
         } else {
             panic!("NEXT PAGE IS OOM??")
         }
     }
 
+    /// `size` needs to be the raw __unalinged__ size of the reqeusted memory.
     pub fn allocate(&mut self, size: usize) -> *mut u8 {
-        let need_size = align(size) as usize;
+        // TODO save `size` but use `aligned_size`
+        let aligned_size = align(size) as usize;
 
-        if self.free.is_null() || self.used.is_null() {
+        // This is a lot of allocation so make sure it only happens once
+        if self.free.is_null() && self.used.is_null() {
             unsafe {
                 // Init the RawSlice's as this is the first time around
-                self.free = RawSlice::new(mmap(0).unwrap() as *mut Block, 0, 4096 / BLOCK_ALIGN);
-                self.used = RawSlice::new(mmap(0).unwrap() as *mut Block, 0, 4096 / BLOCK_ALIGN);
+                self.free = RawSlice::new(
+                    mmap(crate::mmap::PAGE_SIZE as isize).unwrap() as *mut Block,
+                    0,
+                    crate::mmap::PAGE_SIZE / BLOCK_ALIGN,
+                );
+                self.used = RawSlice::new(
+                    mmap(crate::mmap::PAGE_SIZE as isize).unwrap() as *mut Block,
+                    0,
+                    crate::mmap::PAGE_SIZE / BLOCK_ALIGN,
+                );
 
-                self.extend_heap(need_size)
+                self.extend_heap(aligned_size)
             }
-        } else if let Some(blk) = self.free.find(need_size) {
+        // `find(...)` handles spliting and merging of blocks
+        } else if let Some(blk) = self.free.find(aligned_size) {
+            // "copy" the pointer before pushing the blk onto the used list
             let data = blk.raw_data();
             self.used.push(blk);
             data
         } else {
-            unsafe { self.extend_heap(need_size) }
+            unsafe { self.extend_heap(aligned_size) }
         }
+    }
+
+    pub fn free(&mut self, ptr: *mut u8) {
+        let idx = self
+            .used
+            .binary_search(&Block::new(ptr, 0))
+            .unwrap_or_else(|x| x);
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-
-    use core::ops::Deref;
 
     #[test]
     fn test_raw_slice() {
@@ -374,6 +493,17 @@ mod test {
             );
 
             assert_eq!(*ptr, 10)
+        }
+    }
+
+    #[test]
+    fn test_alloc() {
+        let mut bk = BookKeeper::new();
+
+        let ptr = bk.allocate(mem::size_of::<u32>());
+        unsafe {
+            ptr::write(ptr as *mut u32, 11u32);
+            assert_eq!(*(ptr as *mut u32), 11u32)
         }
     }
 }

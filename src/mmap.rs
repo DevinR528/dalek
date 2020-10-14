@@ -4,7 +4,7 @@ use core::ptr;
 
 use crate::syscall;
 
-use libc::PT_DYNAMIC;
+use libc::{MAP_FAILED, _SC_PAGESIZE, _SC_PAGE_SIZE};
 
 /// This memory can be read.
 /// Sets the permissions to allow reading.
@@ -19,6 +19,15 @@ const MAP_ANON: u8 = 0x0020;
 /// Do not share this memory with other processes, changes
 /// will __not__ be written back to memory.
 const MAP_PRIVATE: u8 = 0x0002;
+#[cfg(target_arch = "x86_64")]
+/// Default non big page size on linux x86_64.
+pub const PAGE_SIZE: usize = 4096;
+
+#[cfg(target_arch = "mips")]
+/// Default non big page size on mips.
+pub const PAGE_SIZE: usize = 16384;
+
+// TODO docs and such
 const STACK: u8 = 0;
 const OFFSET: u64 = 0;
 const NOT_FILE: i8 = -1;
@@ -44,49 +53,22 @@ unsafe impl Sync for MMap {}
 
 impl MMap {
     unsafe fn mmap(&mut self, size: isize) -> Result<*const u8, ()> {
-        let old = self.current_page();
-        let expect = old.clone().offset(size);
-
-        let new = _mmap(expect, size as usize);
-
-        if expect == new {
-            self.current = expect;
-            Ok(old)
+        let new = _mmap(size as usize);
+        if new != !0 as *const _ {
+            self.current = new;
+            Ok(new)
         } else {
-            // BRK failed. This syscall is rather weird, but whenever it fails (e.g. OOM) it
-            // returns the old (unchanged) break.
-            assert_eq!(old, new);
+            // mmap returns !0 on a failed mapping request
             Err(())
         }
     }
-
-    fn current_page(&mut self) -> *const u8 {
-        if !self.current.is_null() {
-            let res = self.current;
-            debug_assert!(
-                res == current_page(),
-                "The cached program break is out of sync with the \
-                 actual program break. Are you interfering with BRK? If so, prefer the \
-                 provided 'sbrk' instead, then."
-            );
-            return res;
-        }
-
-        let cur = current_page();
-        self.current = cur;
-        cur
-    }
-}
-
-fn current_page() -> *const u8 {
-    unsafe { _mmap(ptr::null(), 1024) }
 }
 
 // #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub unsafe fn _mmap(ptr: *const u8, size: usize) -> *const u8 {
+pub unsafe fn _mmap(size: usize) -> *const u8 {
     syscall!(
         MMAP,
-        ptr,
+        ptr::null() as *const u8,
         size,
         PROT_READ | PROT_WRITE,
         MAP_SHARED | MAP_ANON | STACK,
@@ -98,19 +80,29 @@ pub unsafe fn _mmap(ptr: *const u8, size: usize) -> *const u8 {
 #[test]
 fn mmap_call() {
     unsafe {
-        let ptr = _mmap(ptr::null(), 1024) as *mut u8;
-        // println!("{:?}", ptr);
-        let ptr2 = _mmap(ptr::null(), 1024) as *mut u8;
-        // println!("{:?}", ptr2);
+        println!("{}", libc::sysconf(_SC_PAGESIZE));
 
-        // for i in 0..1025 {
-        //     ptr::write(ptr.add(i), 0);
-        // }
+        let ptr = _mmap(10) as *mut u8;
+        println!("{:?}", ptr);
+        let ptr2 = _mmap(1024) as *mut u8;
+        println!("{:?}", ptr2);
 
-        // for i in 0..4096 {
-        //     // page size must be this at 4097 it crashes
-        //     println!("{:?}", i);
-        //     let x = ptr::read(ptr.add(i));
-        // }
+        for i in 0..1025 {
+            ptr::write(ptr.add(i), 1);
+        }
+
+        // mmap allocates a PAGE_SIZE multiple of size, so under 4096 is a page
+        // 4096 + 1 is 2 pages or 8182 bytes
+        for i in 0..4096 {
+            // page size must be this at 4097 it crashes
+            let x = ptr::read(ptr.add(i));
+
+            // up to but not including
+            if i < 1025 {
+                assert_eq!(x, 1, "{}", i);
+            } else {
+                assert_eq!(x, 0, "{}", i);
+            }
+        }
     }
 }
