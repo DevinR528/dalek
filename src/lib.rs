@@ -1,6 +1,8 @@
 #![feature(allocator_api, asm, llvm_asm, nonnull_slice_from_raw_parts)]
 #![allow(unused)]
+
 mod block;
+mod bookkeeper;
 mod breaks;
 mod mmap;
 mod pointer;
@@ -14,29 +16,12 @@ use core::{
 };
 
 use block::{Block, BlockState};
+use bookkeeper::BookKeeper;
 use breaks::{brk, sbrk};
 use sc as syscall;
 use util::{align, MIN_ALIGN};
 
-macro_rules! dbg {
-    ($val:expr) => {
-        match $val {
-            tmp => {
-                #[cfg(debug_assertions)]
-                {
-                    eprintln!(
-                        "[{}:{}] {} = {:#?}",
-                        file!(),
-                        line!(),
-                        stringify!($val),
-                        &tmp
-                    );
-                }
-                tmp
-            }
-        }
-    };
-}
+static mut BOOKKEEPER: BookKeeper = BookKeeper::new();
 
 static mut GLOBAL_BASE: *mut Block = ptr::null_mut();
 

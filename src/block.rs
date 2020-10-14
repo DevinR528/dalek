@@ -124,7 +124,6 @@ impl Block {
         let size = need_size as usize - BLOCK_SIZE;
         // Returns pointer to the next free chunk
         let mut b = sbrk(BLOCK_SIZE as isize)
-            .ok()
             .map(|ptr| Block::from_raw(ptr as *mut _, size, last))
             .unwrap();
 
