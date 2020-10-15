@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// The `BookKeeper` acts as our arena, it keeps `Chunks` of different size classes
-/// sorted in assending order smallest -> largest.
+/// sorted in ascending order smallest -> largest.
 ///
 /// We use a `free` and `used` tree to represent currently used and
 /// currently free but still owned by the arena (not returned to the os).
