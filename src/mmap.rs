@@ -19,6 +19,7 @@ const MAP_ANON: u8 = 0x0020;
 /// Do not share this memory with other processes, changes
 /// will __not__ be written back to memory.
 const MAP_PRIVATE: u8 = 0x0002;
+
 #[cfg(target_arch = "x86_64")]
 /// Default non big page size on linux x86_64.
 pub const PAGE_SIZE: usize = 4096;

@@ -12,6 +12,11 @@ use crate::{
     util::{align, extra_brk, MIN_ALIGN},
 };
 
+/// The `BookKeeper` acts as our arena, it keeps `Chunks` of different size classes
+/// sorted in assending order smallest -> largest.
+///
+/// We use a `free` and `used` tree to represent currently used and
+/// currently free but still owned by the arena (not returned to the os).
 pub struct BookKeeper {
     free: RawSlice<Block>,
     used: RawSlice<Block>,

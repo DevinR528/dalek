@@ -1,5 +1,6 @@
 pub mod block;
 pub mod bookkeeper;
+mod chunk;
 pub mod raw_slice;
 
 pub use block::Block;
