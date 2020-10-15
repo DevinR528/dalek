@@ -111,34 +111,48 @@ impl<T> RawSlice<T> {
     pub fn remove(&mut self, idx: usize) -> T {
         assert!(idx < self.len);
 
-        unsafe {
-            let item = ptr::read(self.ptr.as_ptr().add(idx));
+        let len = self.len();
 
-            for idx in idx..self.len {
-                ptr::write(
-                    self.ptr.as_ptr().add(idx),
-                    ptr::read(self.ptr.as_ptr().add(idx + 1)),
-                );
-            }
+        unsafe {
+            let ptr = self.ptr.as_ptr().add(idx);
+
+            // Copy the element, this is unsafe since
+            // for two lines we have the element aliased twice
+            let item = ptr::read(ptr);
+
+            ptr::copy(ptr.offset(1), ptr, len - idx - 1);
+
             self.len -= 1;
+
             item
         }
     }
 
     pub fn insert(&mut self, idx: usize, item: T) {
-        assert!(idx < self.len && self.cap > self.len + 1);
+        assert!(
+            idx <= self.len && self.cap > self.len + 1,
+            "len: {} cap: {} idx: {}",
+            self.len,
+            self.cap,
+            idx
+        );
+
+        let len = self.len();
 
         unsafe {
-            for idx in idx..self.len {
-                ptr::write(
-                    self.ptr.as_ptr().add(idx),
-                    ptr::read(self.ptr.as_ptr().add(idx + 1)),
-                );
-            }
-            ptr::write(self.ptr.as_ptr().add(idx), item);
+            // Add to the len, shifting everything over by one
+            let ptr = self.ptr.as_ptr().add(idx);
 
-            self.len += 1;
+            // Shift everything over, this leaves element at idx
+            // doubled
+            // `[1, 2, 3, 3, 4]`
+            //         ^ insert whatever at index 2 would result in that
+            ptr::copy(ptr, ptr.offset(1), len - idx);
+
+            // finally write the new element, overwriting the copied `idx`th value
+            ptr::write(ptr, item);
         }
+        self.len += 1;
     }
 
     pub fn resize(&mut self, new_ptr: *mut T, new_cap: usize) -> EmptyResult {
@@ -466,6 +480,27 @@ mod test {
         let x = vec.remove(0);
         assert_eq!(x, 0);
         assert_eq!(&*vec, [1, 2, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn test_insert() {
+        let mut buffer = [1u8, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut vec = unsafe { RawSlice::new(&mut buffer[0] as *mut u8, 4, 16) };
+
+        vec.insert(2, 10);
+        assert_eq!(&*vec, [1u8, 2, 10, 3, 4]);
+        assert_eq!(vec.len(), 5);
+
+        let mut buffer = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 0, 0, 0, 0];
+        let mut vec = unsafe { RawSlice::new(&mut buffer[0] as *mut u8, 10, 16) };
+
+        vec.insert(0, 10);
+        assert_eq!(&*vec, [10u8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(vec.len(), 11);
+
+        vec.insert(11, 10);
+        assert_eq!(&*vec, [10u8, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(vec.len(), 12);
     }
 
     #[test]
