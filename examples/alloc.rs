@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::{alloc::GlobalAlloc, ptr};
 
-use ralloc::Ralloc;
+use dalek::Ralloc;
 
 #[global_allocator]
 static GLOBAL: Ralloc = Ralloc;

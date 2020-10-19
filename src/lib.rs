@@ -4,10 +4,13 @@
 mod block;
 mod breaks;
 mod ledger;
+#[cfg(target_os = "unix")]
 mod mmap;
 mod pointer;
 mod sc;
 mod util;
+#[cfg(target_os = "windows")]
+mod win_mmap;
 
 use core::{
     alloc::{AllocError, AllocRef, GlobalAlloc, Layout, LayoutErr},
@@ -20,6 +23,9 @@ use breaks::{brk, sbrk};
 use ledger::BookKeeper;
 use sc as syscall;
 use util::{align, MIN_ALIGN};
+
+#[cfg(target_os = "windows")]
+use win_mmap as mmap;
 
 static mut BOOKKEEPER: BookKeeper = BookKeeper::new();
 
@@ -99,6 +105,7 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
 }
 
 // TODO
+#[cfg(target_os = "unix")]
 unsafe fn align_malloc(layout: Layout) -> *mut u8 {
     let mut out = ptr::null_mut();
     let align = layout.align().max(crate::mem::size_of::<usize>());

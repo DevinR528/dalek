@@ -1,11 +1,26 @@
-//! Make a request to mmap 🎶 🕺🕺 🎶
+//! Make a request to CreateFileMappingW window's mmap 🎶 🕺🕺 🎶
 
-use core::ptr;
+use core::{mem, ptr};
 
 use crate::syscall;
 
-#[cfg(target_os = "unix")]
-use libc::{MAP_FAILED, _SC_PAGESIZE, _SC_PAGE_SIZE};
+use winapi::{
+    shared::{basetsd::SIZE_T, minwindef::DWORD},
+    um::{
+        handleapi::{CloseHandle, INVALID_HANDLE_VALUE},
+        memoryapi::{
+            CreateFileMappingW, FlushViewOfFile, MapViewOfFile, UnmapViewOfFile, VirtualAlloc,
+            VirtualProtect, FILE_MAP_ALL_ACCESS, FILE_MAP_COPY, FILE_MAP_EXECUTE, FILE_MAP_READ,
+            FILE_MAP_WRITE,
+        },
+        sysinfoapi::GetSystemInfo,
+        winnt::{
+            MEM_COMMIT, MEM_LARGE_PAGES, MEM_RELEASE, MEM_RESERVE, PAGE_EXECUTE_READ,
+            PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_NOACCESS, PAGE_READONLY,
+            PAGE_READWRITE, PAGE_WRITECOPY,
+        },
+    },
+};
 
 /// This memory can be read.
 /// Sets the permissions to allow reading.
@@ -55,7 +70,10 @@ unsafe impl Sync for MMap {}
 
 impl MMap {
     unsafe fn mmap(&mut self, size: isize) -> Result<*const u8, ()> {
-        let new = _mmap(size as usize);
+        let new = _mmap(size as usize)?;
+        // TODO a check that new == current + size
+        // If and only if we keep track of space after first
+        // call to VirtualAlloc
         if new != !0 as *const _ {
             self.current = new;
             Ok(new)
@@ -66,31 +84,35 @@ impl MMap {
     }
 }
 
-// #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub unsafe fn _mmap(size: usize) -> *const u8 {
-    syscall!(
-        MMAP,
-        ptr::null() as *const u8,
-        size,
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED | MAP_ANON | STACK,
-        NOT_FILE,
-        OFFSET
-    ) as *const u8
+pub unsafe fn _mmap(size: usize) -> Result<*const u8, ()> {
+    let mut info = mem::zeroed();
+    GetSystemInfo(&mut info);
+    // println!("{}", info.dwPageSize);
+
+    let ptr = VirtualAlloc(
+        ptr::null_mut(),
+        size as SIZE_T,
+        MEM_RESERVE | MEM_COMMIT,
+        PAGE_READWRITE,
+    );
+
+    if !ptr.is_null() {
+        Ok(ptr as *mut u8)
+    } else {
+        Err(())
+    }
 }
 
 #[test]
-#[cfg(target_os = "unix")]
 fn mmap_call() {
     unsafe {
-        println!("{}", libc::sysconf(_SC_PAGESIZE));
-
-        let ptr = _mmap(10) as *mut u8;
+        let ptr = _mmap(1024).unwrap() as *mut u8;
         println!("{:?}", ptr);
-        let ptr2 = _mmap(1024) as *mut u8;
-        println!("{:?}", ptr2);
+        let ptr2 = _mmap(1024).unwrap();
+        println!("{:?}", 840 * mem::size_of::<u32>());
 
         for i in 0..1025 {
+            // print!(" {} ", i);
             ptr::write(ptr.add(i), 1);
         }
 

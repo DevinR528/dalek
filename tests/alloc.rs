@@ -9,7 +9,7 @@ use std::{
 
 use test::Bencher;
 
-use ralloc::Ralloc as Global;
+use dalek::Ralloc as Global;
 
 #[test]
 fn allocate_zeroed() {

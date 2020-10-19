@@ -63,69 +63,83 @@ impl Chunk {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
 
-    fn ceil_log_2(d: usize) -> usize {
-        uint32_t result = is_power_of_two(d) ? 0 : 1;
-        while (d>1) {
-          result++;
-          d = d>>1;
-        }
-        return result;
-      }
-      
-      fn calculate_shift_magic(d: usize) -> usize {
-        if (d > chunksize) {
-          return 1;
-        } else if (is_power_of_two(d)) {
-          return ceil_log_2(d);
-        } else {
-          return 32+ceil_log_2(d);
-        }
-      }
+    const CHUNK_SIZE: usize = 16;
+    const CACHE_LINE: usize = 16;
 
-      
-      fn calculate_multiply_magic(d: usize) -> usize {
-        if (d > chunksize) {
-          return 1;
-        } else if (is_power_of_two(d)) {
-          return 1;
-        } else {
-          return (d-1+(1ul << calculate_shift_magic(d)))/d;
-        }
-      }
-      
-      fn gcd(a: usize, uint64_t b) -> usize {
-        if (a==b) return a;
-        if (a<b) return gcd(a, b-a);
-        return gcd(b, a-b);
-      }
-      
-      fn lcm(a: usize, uint64_t b) -> usize {
-        uint64_t g = gcd(a, b);
-        return (a/g)*b;
-      }
-      
-      fn calculate_foliosize(objsize: usize) -> usize {
-        if (objsize > chunksize) return objsize;
-        if (is_power_of_two(objsize)) {
-          if (objsize < pagesize) return pagesize;
-          else return objsize;
-        }
-        if (objsize > 16*1024) return objsize;
-        if (objsize > 256) {
-          return (objsize/cacheline_size)*pagesize;
-        }
-        if (objsize > pagesize) return objsize;
-        return lcm(objsize, pagesize);
-      }
-
-    #[test]
-    fn math_stuff() {
-
+    fn is_power_of_2(num: usize) -> bool {
+        (num & (num - 1)) == 0
     }
 
+    fn ceil_log_2(mut d: usize) -> usize {
+        let mut result = if is_power_of_2(d) { 0 } else { 1 };
+        while d > 1 {
+            result += 1;
+            d >>= 1;
+        }
+        result
+    }
+
+    fn calculate_shift_magic(d: usize) -> usize {
+        if (d > CHUNK_SIZE) {
+            1
+        } else if (is_power_of_2(d)) {
+            ceil_log_2(d)
+        } else {
+            32 + ceil_log_2(d)
+        }
+    }
+
+    fn calculate_multiply_magic(d: usize) -> usize {
+        if (d > CHUNK_SIZE) || is_power_of_2(d) {
+            1
+        } else {
+            (d - 1 + (1 << calculate_shift_magic(d))) / d
+        }
+    }
+
+    fn gcd(a: usize, b: usize) -> usize {
+        if (a == b) {
+            return a;
+        };
+        if (a < b) {
+            return gcd(a, b - a);
+        };
+        gcd(b, a - b)
+    }
+
+    fn lcm(a: usize, b: usize) -> usize {
+        let g = gcd(a, b);
+        (a / g) * b
+    }
+
+    fn calculate_foliosize(objsize: usize) -> usize {
+        if (objsize > CHUNK_SIZE) {
+            return objsize;
+        };
+        if (is_power_of_2(objsize)) {
+            return if (objsize < PAGE_SIZE) {
+                PAGE_SIZE
+            } else {
+                objsize
+            };
+        }
+        if (objsize > 16 * 1024) {
+            return objsize;
+        };
+        if (objsize > 256) {
+            return (objsize / CACHE_LINE) * PAGE_SIZE;
+        }
+
+        if (objsize > PAGE_SIZE) {
+            return objsize;
+        };
+        lcm(objsize, PAGE_SIZE)
+    }
+
+    #[test]
+    fn math_stuff() {}
 }
