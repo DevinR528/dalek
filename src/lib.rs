@@ -4,12 +4,12 @@
 mod block;
 mod breaks;
 mod ledger;
-#[cfg(target_os = "unix")]
+#[cfg(target_family = "unix")]
 mod mmap;
 mod pointer;
 mod sc;
 mod util;
-#[cfg(target_os = "windows")]
+#[cfg(target_family = "windows")]
 mod win_mmap;
 
 use core::{
@@ -24,7 +24,8 @@ use ledger::BookKeeper;
 use sc as syscall;
 use util::{align, MIN_ALIGN};
 
-#[cfg(target_os = "windows")]
+// So we only have to call it mmap reguardless of platform.
+#[cfg(target_family = "windows")]
 use win_mmap as mmap;
 
 static mut BOOKKEEPER: BookKeeper = BookKeeper::new();
