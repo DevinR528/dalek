@@ -48,7 +48,7 @@ impl<T: fmt::Debug> fmt::Debug for Node<T> {
                 if self.left.is_null() {
                     &"null"
                 } else {
-                    &*self.left
+                    &self.left
                 }
             })
             .field("right", unsafe {
@@ -84,45 +84,70 @@ impl<T: fmt::Debug> Node<T> {
         }
     }
 
-    pub fn left_id(&self) -> Option<usize> {
-        if self.left.is_null() {
-            None
-        } else {
-            unsafe { Some((*self.left).addr as usize) }
-        }
-    }
-
-    pub fn right_id(&self) -> Option<usize> {
-        if self.right.is_null() {
-            None
-        } else {
-            unsafe { Some((*self.right).addr as usize) }
-        }
-    }
-
-    pub fn parent(&self) -> *mut Node<T> {
-        self.parent
-    }
-
-    pub fn grandparent(&self) -> *mut Node<T> {
-        if !self.parent.is_null() {
-            unsafe { (*self.parent).parent() }
-        } else {
+    pub unsafe fn left(node: *mut Node<T>) -> *mut Node<T> {
+        if node.is_null() {
             ptr::null_mut()
+        } else {
+            (*node).left
         }
     }
 
-    pub fn sibling(&self) -> *mut Node<T> {
-        let p = self.parent();
+    pub unsafe fn right(node: *mut Node<T>) -> *mut Node<T> {
+        if node.is_null() {
+            ptr::null_mut()
+        } else {
+            (*node).right
+        }
+    }
+
+    pub unsafe fn left_id(node: *mut Node<T>) -> Option<usize> {
+        if node.is_null() {
+            return None;
+        }
+        if (*node).left.is_null() {
+            None
+        } else {
+            unsafe { Some((*node).left as usize) }
+        }
+    }
+
+    pub unsafe fn right_id(node: *mut Node<T>) -> Option<usize> {
+        if node.is_null() {
+            return None;
+        }
+        if (*node).right.is_null() {
+            None
+        } else {
+            unsafe { Some((*node).right as usize) }
+        }
+    }
+
+    pub unsafe fn parent(node: *mut Node<T>) -> *mut Node<T> {
+        if node.is_null() {
+            ptr::null_mut()
+        } else {
+            (*node).parent
+        }
+    }
+
+    pub unsafe fn grandparent(node: *mut Node<T>) -> *mut Node<T> {
+        if Node::parent(node).is_null() {
+            ptr::null_mut()
+        } else {
+            Node::parent(Node::parent(node))
+        }
+    }
+
+    pub unsafe fn sibling(node: *mut Node<T>) -> *mut Node<T> {
+        let p = Node::parent(node);
 
         if p.is_null() {
             return p;
         }
-        let p = unsafe { &*p };
-        if Some(self.addr as usize) == p.left_id() {
-            p.right
+        if Some(node as usize) == Node::left_id(p) {
+            Node::right(p)
         } else {
-            p.left
+            Node::left(p)
         }
     }
 
@@ -130,40 +155,36 @@ impl<T: fmt::Debug> Node<T> {
     ///
     /// Siblings are found by going to the parent and comparing
     /// which child was the start and returning the other child.
-    pub fn uncle(&self) -> *mut Node<T> {
-        let p = self.parent();
+    pub unsafe fn uncle(node: *mut Node<T>) -> *mut Node<T> {
+        let p = Node::parent(node);
 
         if p.is_null() {
-            p
+            ptr::null_mut()
         } else {
-            unsafe { (*p).sibling() }
+            Node::sibling(p)
         }
     }
 
-    pub fn rotate_left(&mut self) {
-        dbg!(&self);
-
-        let new_node = self.right;
-        let p = self.parent();
+    pub unsafe fn rotate_left(node: *mut Node<T>) {
+        let new_node = Node::right(node);
+        let p = Node::parent(node);
         // Cannot move an empty leaf to an internal node spot
         assert!(!new_node.is_null());
 
-        unsafe {
-            // shift the right child's left child up to right child
-            self.right = (*new_node).left;
-            // shift self down and out
-            //          N                      N
-            //       P     Q  ==>         nul      Q
-            //    R    nul              R
-            //                       P
-            (*new_node).left = self.addr;
-        }
+        // shift the right child's left child up to right child
+        (*node).right = (*new_node).left;
+        // shift self down and out
+        //          N                      N
+        //       P     Q  ==>         nul      Q
+        //    R    nul              R
+        //                       P
+        (*new_node).left = node;
         // Create parent link to complete above link
-        self.parent = new_node;
+        (*node).parent = new_node;
 
         // If we just added a new right child set self as the parent
-        if !self.right.is_null() {
-            unsafe { (*self.right).parent = self.addr };
+        if !(*node).right.is_null() {
+            (*(*node).right).parent = node;
         }
 
         // Make sure this is not the root node
@@ -174,9 +195,11 @@ impl<T: fmt::Debug> Node<T> {
                 //      nul      Q ==>      R       Q
                 //    R                 P
                 // P
-                if Some(self.addr as usize) == (*p).left_id() {
+                if node == Node::left(p) {
+                    dbg!(&node);
+                    dbg!(&(*node).addr);
                     (*p).left = new_node;
-                } else if Some(self.addr as usize) == (*p).right_id() {
+                } else if node == Node::right(p) {
                     (*p).right = new_node;
                 }
             }
@@ -187,29 +210,29 @@ impl<T: fmt::Debug> Node<T> {
         }
     }
 
-    pub fn rotate_right(&mut self) {
-        let new_node = self.left;
-        let p = self.parent();
+    pub unsafe fn rotate_right(node: *mut Node<T>) {
+        let new_node = Node::left(node);
+        let p = Node::parent(node);
         // Cannot move an empty leaf to an internal node spot
         assert!(!new_node.is_null());
 
         unsafe {
-            self.left = (*new_node).right;
-            (*new_node).right = self.addr;
+            (*node).left = Node::right(new_node);
+            (*new_node).right = node;
         }
-        self.parent = new_node;
+        (*node).parent = new_node;
 
         // If we just added a new left child set self as the parent
-        if !self.left.is_null() {
-            unsafe { (*self.left).parent = self.addr };
+        if !(*node).left.is_null() {
+            unsafe { (*(*node).left).parent = node };
         }
 
         // If we are at the root
         if !p.is_null() {
             unsafe {
-                if Some(self.addr as usize) == (*p).left_id() {
+                if node == Node::left(p) {
                     (*p).left = new_node;
-                } else if Some(self.addr as usize) == (*p).right_id() {
+                } else if node == Node::right(p) {
                     (*p).right = new_node;
                 }
             }
@@ -220,19 +243,17 @@ impl<T: fmt::Debug> Node<T> {
     }
 
     fn balance_insert(new: *mut Node<T>) {
-        let node = if new.is_null() {
+        if new.is_null() {
             panic!("new was null");
             return;
-        } else {
-            unsafe { &*new }
         };
 
         unsafe {
-            if node.parent().is_null() {
+            if Node::parent(new).is_null() {
                 Self::balance_1(new);
-            } else if (*node.parent()).color == NodeColor::Black {
+            } else if (*Node::parent(new)).color == NodeColor::Black {
                 Self::balance_2(new);
-            } else if !node.uncle().is_null() && (*node.uncle()).color == NodeColor::Red {
+            } else if !Node::uncle(new).is_null() && (*Node::uncle(new)).color == NodeColor::Red {
                 Self::balance_3(new);
             } else {
                 Self::balance_4(new);
@@ -242,7 +263,6 @@ impl<T: fmt::Debug> Node<T> {
 
     fn balance_1(new: *mut Node<T>) {
         println!("balance 1");
-
         unsafe {
             (*new).color = NodeColor::Black;
         }
@@ -257,80 +277,81 @@ impl<T: fmt::Debug> Node<T> {
         println!("balance 3");
 
         unsafe {
-            (*(*new).parent()).color = NodeColor::Black;
-            (*(*new).uncle()).color = NodeColor::Black;
-            (*(*new).grandparent()).color = NodeColor::Red;
-            Self::balance_insert((*new).grandparent())
+            (*Node::parent(new)).color = NodeColor::Black;
+            (*Node::uncle(new)).color = NodeColor::Black;
+            (*Node::grandparent(new)).color = NodeColor::Red;
+            Self::balance_insert(Node::grandparent(new))
         }
     }
 
-    fn balance_4(mut new: *mut Node<T>) {
+    unsafe fn balance_4(mut new: *mut Node<T>) {
         println!("balance 4");
         unsafe {
-            let p = (*new).parent();
-            let g = (*new).grandparent();
+            let p = Node::parent(new);
+            let g = Node::grandparent(new);
 
-            if new == (*p).right && p == (*g).left {
-                (*p).rotate_left();
+            dbg!(&*p);
+            dbg!(&*new);
+
+            if new == Node::right(p) && p == Node::left(g) {
+                Node::rotate_left(p);
                 new = (*new).left;
-            } else if new == (*p).left && p == (*g).right {
-                (*p).rotate_right();
+            } else if new == Node::left(p) && p == Node::right(g) {
+                Node::rotate_right(p);
                 new = (*new).right;
             }
 
             // Our `new` may be different now
-            let p = (*new).parent();
-            let g = (*new).grandparent();
+            let p = Node::parent(new);
+            let g = Node::grandparent(new);
 
-            if Some((*new).addr as usize) == (*p).left_id() {
-                (*p).rotate_right()
+            if new == Node::left(p) {
+                Node::rotate_right(g);
             } else {
-                (*p).rotate_left()
+                Node::rotate_left(g);
             }
 
-            (*p).color = NodeColor::Black;
-            (*g).color = NodeColor::Red;
+            if !p.is_null() {
+                (*p).color = NodeColor::Black;
+            }
+            if !g.is_null() {
+                (*g).color = NodeColor::Red;
+            }
         }
     }
 }
 
 impl<T: Ord + fmt::Debug> Node<T> {
-    unsafe fn insert_recurs(root: *mut Node<T>, new: *mut Node<T>) -> *mut Node<T> {
-        if new.item.as_ref() < self.item.as_ref() {
-            if !self.left.is_null() {
-                Self::insert_recurs(&mut (*self.left), new);
-                return self.right;
+    unsafe fn insert_recurs(root: *mut Node<T>, new: *mut Node<T>) {
+        if !root.is_null() {
+            if (*new).item.as_ref() < (*root).item.as_ref() {
+                if !(*root).left.is_null() {
+                    Self::insert_recurs(Node::left(root), new);
+                } else {
+                    (*root).left = new;
+                }
+            } else if !(*root).right.is_null() {
+                Self::insert_recurs(Node::right(root), new);
             } else {
-                self.left = new.addr;
+                (*root).right = new;
             }
-        } else if !self.right.is_null() {
-            Self::insert_recurs(&mut (*self.right), new);
-            return self.right;
-        } else {
-            self.right = new.addr;
         }
 
-        new.parent = self.addr;
-        new.left = ptr::null_mut();
-        new.right = ptr::null_mut();
-        new.color = NodeColor::Red;
-        ptr::write(new.addr, new);
-        ptr::write(self.addr, ptr::read(self));
-        self.right
+        (*new).parent = root;
+        (*new).left = ptr::null_mut();
+        (*new).right = ptr::null_mut();
+        (*new).color = NodeColor::Red;
     }
 
-    pub unsafe fn insert(root: *mut Node<T>, new: *mut Node<T>) {
-        let new_ptr = Node::insert_recurs(root, new);
+    pub unsafe fn insert(mut root: *mut Node<T>, new: *mut Node<T>) {
+        Node::insert_recurs(root, new);
+        Self::balance_insert(new);
 
-        Self::balance_insert(new_ptr);
-
-        self.addr = new_ptr;
-        while !self.parent().is_null() {
-            self.addr = self.parent();
+        root = new;
+        while !Node::parent(root).is_null() {
+            root = Node::parent(root);
         }
-
-        ptr::replace(self.addr, ptr::read(self.addr));
-        dbg!(&self);
+        dbg!(root);
     }
 }
 
@@ -348,23 +369,29 @@ mod test {
     fn create_tree() {
         let mut space = [0_u8; 10 * mem::size_of::<Node<u8>>()];
         let mut items = [0_u8; 10];
-        let ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
+        let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
         let item_ptr = &mut items[0] as *mut u8;
 
         let mut root = ptr::null_mut();
-        for idx in 0_u8..10 {
+        for idx in 0_u8..3 {
             unsafe {
                 ptr::write(item_ptr.add(idx as usize), idx);
-            }
-            let mut node = unsafe { Node::new(item_ptr.add(idx as usize), ptr.add(idx as usize)) };
-            if idx == 0 {
-                node.color = NodeColor::Black;
-                root = node.addr;
-            } else {
-                unsafe { Node::insert(root, node.addr) };
+                // Node::new writes the data to the ptr
+                // which is why we don't do the same as the above for the item_ptr
+                let mut node = Node::new(item_ptr.add(idx as usize), ptr.add(idx as usize));
+                if idx == 0 {
+                    root = node.addr;
+                    (*root).color = NodeColor::Black;
+                    dbg!(&*root);
+                } else {
+                    Node::insert(root, node.addr);
+                }
             }
         }
 
-        println!("{:#?}", root)
+        unsafe {
+            println!("hey");
+            dbg!(&*root);
+        }
     }
 }
