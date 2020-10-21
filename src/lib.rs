@@ -8,7 +8,9 @@ mod ledger;
 mod mmap;
 mod pointer;
 mod sc;
+mod tree;
 mod util;
+
 #[cfg(target_family = "windows")]
 mod win_mmap;
 
