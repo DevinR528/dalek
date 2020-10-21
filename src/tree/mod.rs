@@ -48,7 +48,7 @@ impl<T: fmt::Debug> fmt::Debug for Node<T> {
                 if self.left.is_null() {
                     &"null"
                 } else {
-                    &self.left
+                    &*self.left
                 }
             })
             .field("right", unsafe {
@@ -82,6 +82,15 @@ impl<T: fmt::Debug> Node<T> {
             // I'm assuming this is safe since we just wrote it
             ptr::read(addr)
         }
+    }
+
+    pub unsafe fn traverse_tree<F: Fn(&T, usize)>(node: *mut Node<T>, call: &F, align: usize) {
+        if node.is_null() {
+            return;
+        }
+        Node::traverse_tree(Node::left(node), call, align - 1);
+        call((*node).item.as_ref(), align);
+        Node::traverse_tree(Node::right(node), call, align + 1);
     }
 
     pub unsafe fn left(node: *mut Node<T>) -> *mut Node<T> {
@@ -322,36 +331,52 @@ impl<T: fmt::Debug> Node<T> {
 }
 
 impl<T: Ord + fmt::Debug> Node<T> {
-    unsafe fn insert_recurs(root: *mut Node<T>, new: *mut Node<T>) {
-        if !root.is_null() {
-            if (*new).item.as_ref() < (*root).item.as_ref() {
-                if !(*root).left.is_null() {
-                    Self::insert_recurs(Node::left(root), new);
+    unsafe fn insert_iter(mut root: *mut Node<T>, new: *mut Node<T>) {
+        let mut current = root;
+        while !current.is_null() {
+            if (*new).item.as_ref() < (*current).item.as_ref() {
+                if !(*current).left.is_null() {
+                    current = Node::left(current);
                 } else {
-                    (*root).left = new;
+                    (*current).left = new;
+                    break;
                 }
-            } else if !(*root).right.is_null() {
-                Self::insert_recurs(Node::right(root), new);
+            } else if !(*current).right.is_null() {
+                current = Node::right(current);
             } else {
-                (*root).right = new;
+                (*current).right = new;
+                break;
             }
         }
 
-        (*new).parent = root;
+        (*new).parent = current;
         (*new).left = ptr::null_mut();
         (*new).right = ptr::null_mut();
         (*new).color = NodeColor::Red;
+
+        dbg!(&*new);
+        dbg!(&*root);
     }
 
-    pub unsafe fn insert(mut root: *mut Node<T>, new: *mut Node<T>) {
-        Node::insert_recurs(root, new);
+    /// Insert `new` in the first leaf to the right if `T` is larger, to the
+    /// left if `T` is smaller.
+    ///
+    /// Returns the value that should be used as the root.
+    ///
+    /// # Safety
+    /// `new` must always be a valid non-null pointer.
+    /// `root` can be null, when inserting the first `Node` into the root (a one element tree)
+    /// this will succeed.
+    pub unsafe fn insert(mut root: *mut Node<T>, new: *mut Node<T>) -> *mut Node<T> {
+        Node::insert_iter(root, new);
         Self::balance_insert(new);
 
         root = new;
         while !Node::parent(root).is_null() {
             root = Node::parent(root);
         }
-        dbg!(root);
+        dbg!(&&*root);
+        root
     }
 }
 
@@ -373,7 +398,7 @@ mod test {
         let item_ptr = &mut items[0] as *mut u8;
 
         let mut root = ptr::null_mut();
-        for idx in 0_u8..3 {
+        for idx in 0_u8..5 {
             unsafe {
                 ptr::write(item_ptr.add(idx as usize), idx);
                 // Node::new writes the data to the ptr
@@ -382,16 +407,20 @@ mod test {
                 if idx == 0 {
                     root = node.addr;
                     (*root).color = NodeColor::Black;
-                    dbg!(&*root);
                 } else {
-                    Node::insert(root, node.addr);
+                    root = Node::insert(root, node.addr);
                 }
             }
         }
 
         unsafe {
             println!("hey");
-            dbg!(&*root);
+            dbg!(&&&*root);
+            Node::traverse_tree(
+                root,
+                &|val, align| println!("{}{}", " ".repeat(align), val),
+                3,
+            );
         }
     }
 }
