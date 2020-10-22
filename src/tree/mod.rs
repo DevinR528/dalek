@@ -1,6 +1,7 @@
 use core::{
     cell::UnsafeCell,
-    cmp, fmt, mem,
+    cmp::{self, Ordering},
+    fmt, mem,
     ops::{Deref, DerefMut},
     ptr::{self, NonNull},
     slice,
@@ -92,9 +93,9 @@ impl<T: fmt::Debug> Node<T> {
         if node.is_null() {
             return;
         }
-        Node::traverse_tree(Node::right(node), call, align + 4);
+        Node::traverse_tree(Node::right(node), call, align + 5);
         call(&(*node).item, align, &(*node).color);
-        Node::traverse_tree(Node::left(node), call, align + 4);
+        Node::traverse_tree(Node::left(node), call, align + 5);
     }
 
     pub unsafe fn left(node: *mut Node<T>) -> *mut Node<T> {
@@ -376,25 +377,102 @@ impl<T: Ord + Eq + fmt::Debug> Node<T> {
         root
     }
 
-    unsafe fn delete(mut root: *mut Node<T>, key: &T) -> Option<T> {
-        let mut current = root;
-        while !current.is_null() {
-            if &(*current).item < key {
-                if !(*current).left.is_null() {
-                    current = Node::left(current);
-                } else {
-                    break;
-                }
-            } else if &(*current).item > key {
-                if !(*current).right.is_null() {
-                    current = Node::right(current);
-                } else {
-                    break;
-                }
+    unsafe fn delete_case1(node: *mut Node<T>) {
+        if !Node::parent(node).is_null() {
+            Node::delete_case2(node);
+        }
+    }
+
+    unsafe fn delete_case2(node: *mut Node<T>) {
+        let sib = Node::sibling(node);
+
+        if !sib.is_null() && (*sib).color == NodeColor::Red {
+            (*(*node).parent).color = NodeColor::Red;
+            (*sib).color = NodeColor::Black;
+            if node == Node::left(Node::parent(node)) {
+                Node::rotate_left((*node).parent);
+            } else {
+                Node::rotate_right((*node).parent);
             }
         }
 
-        None
+        Node::delete_case3(node)
+    }
+
+    unsafe fn delete_case3(node: *mut Node<T>) {
+        let sib = Node::sibling(node);
+
+        if !sib.is_null() && (*sib).color == NodeColor::Red {
+            (*(*node).parent).color = NodeColor::Red;
+            (*sib).color = NodeColor::Black;
+            if node == Node::left(Node::parent(node)) {
+                Node::rotate_left((*node).parent);
+            } else {
+                Node::rotate_right((*node).parent);
+            }
+        }
+
+        Node::delete_case4(node)
+    }
+
+    unsafe fn delete_case4(node: *mut Node<T>) {}
+
+    /// Detach the `Node` and replace it with `child`.
+    ///
+    /// # Safety
+    /// Both pointers must be __non null__.
+    unsafe fn replace_node(node: *mut Node<T>, child: *mut Node<T>) {
+        (*child).parent = (*node).parent;
+
+        // is this the left node?
+        if node == Node::left(Node::parent(node)) {
+            (*(*node).parent).left = child;
+        } else {
+            (*(*node).parent).right = child;
+        }
+    }
+
+    unsafe fn delete_node(node: *mut Node<T>) {
+        let child = if Node::right(node).is_null() {
+            Node::left(node)
+        } else {
+            Node::right(node)
+        };
+        assert!(!child.is_null());
+
+        Node::replace_node(node, child);
+        if (*node).color == NodeColor::Black {
+            if (*child).color == NodeColor::Red {
+                (*child).color = NodeColor::Black;
+            } else {
+                Node::delete_case1(child);
+            }
+        }
+    }
+
+    /// Unhook the `Node` that matches `key` form the tree.
+    ///
+    /// # Safety
+    ///
+    /// We return the the pointer to the `Node<T>` that matches `key`. This operation
+    /// does __NOT__ free the memory the `Node<T>` occupies, the `Tree<T>` must
+    /// keep track of it. The pointer returned can be null.
+    unsafe fn delete(mut root: *mut Node<T>, key: &T) -> *mut Node<T> {
+        let mut current = root;
+        while !current.is_null() {
+            match (*current).item.cmp(key) {
+                Ordering::Greater if !(*current).right.is_null() => {
+                    current = Node::right(current);
+                }
+                Ordering::Less if !(*current).left.is_null() => {
+                    current = Node::left(current);
+                }
+                _ => break,
+            }
+        }
+
+        Node::delete_node(current);
+        current
     }
 }
 
@@ -430,14 +508,28 @@ impl<T: Ord + fmt::Debug> Tree<T> {
 mod test {
     use super::*;
 
+    fn print_color<T: Ord + fmt::Display>(val: &T, align: usize, color: &NodeColor) {
+        println!(
+            "{}{}{}\x1B[0m",
+            " ".repeat(align),
+            match color {
+                NodeColor::Red => "\x1B[31m",   // Red
+                NodeColor::Black => "\x1B[32m", // Green
+            },
+            format!("({}{})", "0".repeat(2 - val.to_string().len()), val)
+        )
+    }
+
     #[test]
     fn create_tree() {
         let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
         let mut items = [10_u8, 9, 11, 8, 5, 15, 16, 20, 1, 2, 3, 23, 6];
+
+        let mut items = [4u8, 5, 3, 6, 2, 7, 1, 8];
         let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
 
         let mut root = ptr::null_mut();
-        for idx in 0_u8..13 {
+        for idx in 0_u8..7 {
             unsafe {
                 // Node::new writes the data to the ptr
                 // which is why we don't do the same as the above for the item_ptr
@@ -453,21 +545,7 @@ mod test {
 
         unsafe {
             dbg!(&&&*root);
-            Node::traverse_tree(
-                root,
-                &|val, align, color| {
-                    println!(
-                        "{}{}{}\x1B[0m",
-                        " ".repeat(align),
-                        match color {
-                            NodeColor::Red => "\x1B[31m",
-                            NodeColor::Black => "\x1B[32m", // Green
-                        },
-                        format!("({})", val)
-                    )
-                },
-                0,
-            );
+            Node::traverse_tree(root, &print_color, 0);
         }
     }
 }

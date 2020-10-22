@@ -71,7 +71,9 @@ mod test {
     const CACHE_LINE: usize = 16;
 
     fn is_power_of_2(num: usize) -> bool {
-        (num & (num - 1)) == 0
+        // (num & (num - 1)) == 0
+        // except when num == 0 since zero is not a pow2
+        num.is_power_of_two()
     }
 
     fn ceil_log_2(mut d: usize) -> usize {
@@ -84,9 +86,9 @@ mod test {
     }
 
     fn calculate_shift_magic(d: usize) -> usize {
-        if (d > CHUNK_SIZE) {
+        if d > CHUNK_SIZE {
             1
-        } else if (is_power_of_2(d)) {
+        } else if is_power_of_2(d) {
             ceil_log_2(d)
         } else {
             32 + ceil_log_2(d)
@@ -117,20 +119,20 @@ mod test {
     }
 
     fn calculate_foliosize(objsize: usize) -> usize {
-        if (objsize > CHUNK_SIZE) {
+        if objsize > CHUNK_SIZE {
             return objsize;
         };
-        if (is_power_of_2(objsize)) {
+        if is_power_of_2(objsize) {
             return if (objsize < PAGE_SIZE) {
                 PAGE_SIZE
             } else {
                 objsize
             };
         }
-        if (objsize > 16 * 1024) {
+        if objsize > 16 * 1024 {
             return objsize;
         };
-        if (objsize > 256) {
+        if objsize > 256 {
             return (objsize / CACHE_LINE) * PAGE_SIZE;
         }
 
