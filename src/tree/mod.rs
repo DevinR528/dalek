@@ -30,7 +30,7 @@ pub enum NodeColor {
 
 pub struct Node<T> {
     addr: *mut Node<T>,
-    item: NonNull<T>,
+    item: T,
     color: NodeColor,
     parent: *mut Node<T>,
     left: *mut Node<T>,
@@ -40,7 +40,7 @@ pub struct Node<T> {
 impl<T: fmt::Debug> fmt::Debug for Node<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
-            .field("item", unsafe { self.item.as_ref() })
+            .field("item", &self.item)
             .field("color", &self.color)
             .field("addr", &self.addr)
             .field("parent", &self.parent)
@@ -67,10 +67,10 @@ impl<T: fmt::Debug> Node<T> {
     ///
     /// # Safety
     /// The given `addr` must contain enough space for a Node<T> and be aligned.
-    pub fn new(item: *mut T, addr: *mut Node<T>) -> Self {
+    pub fn new(item: T, addr: *mut Node<T>) -> Self {
         let node = Self {
             addr,
-            item: unsafe { NonNull::new_unchecked(item) },
+            item,
             color: NodeColor::Red,
             parent: ptr::null_mut(),
             left: ptr::null_mut(),
@@ -84,13 +84,17 @@ impl<T: fmt::Debug> Node<T> {
         }
     }
 
-    pub unsafe fn traverse_tree<F: Fn(&T, usize)>(node: *mut Node<T>, call: &F, align: usize) {
+    pub unsafe fn traverse_tree<F: Fn(&T, usize, &NodeColor)>(
+        node: *mut Node<T>,
+        call: &F,
+        align: usize,
+    ) {
         if node.is_null() {
             return;
         }
-        Node::traverse_tree(Node::left(node), call, align - 1);
-        call((*node).item.as_ref(), align);
-        Node::traverse_tree(Node::right(node), call, align + 1);
+        Node::traverse_tree(Node::right(node), call, align + 4);
+        call(&(*node).item, align, &(*node).color);
+        Node::traverse_tree(Node::left(node), call, align + 4);
     }
 
     pub unsafe fn left(node: *mut Node<T>) -> *mut Node<T> {
@@ -299,9 +303,6 @@ impl<T: fmt::Debug> Node<T> {
             let p = Node::parent(new);
             let g = Node::grandparent(new);
 
-            dbg!(&*p);
-            dbg!(&*new);
-
             if new == Node::right(p) && p == Node::left(g) {
                 Node::rotate_left(p);
                 new = (*new).left;
@@ -330,11 +331,11 @@ impl<T: fmt::Debug> Node<T> {
     }
 }
 
-impl<T: Ord + fmt::Debug> Node<T> {
+impl<T: Ord + Eq + fmt::Debug> Node<T> {
     unsafe fn insert_iter(mut root: *mut Node<T>, new: *mut Node<T>) {
         let mut current = root;
         while !current.is_null() {
-            if (*new).item.as_ref() < (*current).item.as_ref() {
+            if (*new).item < (*current).item {
                 if !(*current).left.is_null() {
                     current = Node::left(current);
                 } else {
@@ -353,9 +354,6 @@ impl<T: Ord + fmt::Debug> Node<T> {
         (*new).left = ptr::null_mut();
         (*new).right = ptr::null_mut();
         (*new).color = NodeColor::Red;
-
-        dbg!(&*new);
-        dbg!(&*root);
     }
 
     /// Insert `new` in the first leaf to the right if `T` is larger, to the
@@ -367,7 +365,7 @@ impl<T: Ord + fmt::Debug> Node<T> {
     /// `new` must always be a valid non-null pointer.
     /// `root` can be null, when inserting the first `Node` into the root (a one element tree)
     /// this will succeed.
-    pub unsafe fn insert(mut root: *mut Node<T>, new: *mut Node<T>) -> *mut Node<T> {
+    unsafe fn insert(mut root: *mut Node<T>, new: *mut Node<T>) -> *mut Node<T> {
         Node::insert_iter(root, new);
         Self::balance_insert(new);
 
@@ -375,16 +373,58 @@ impl<T: Ord + fmt::Debug> Node<T> {
         while !Node::parent(root).is_null() {
             root = Node::parent(root);
         }
-        dbg!(&&*root);
         root
+    }
+
+    unsafe fn delete(mut root: *mut Node<T>, key: &T) -> Option<T> {
+        let mut current = root;
+        while !current.is_null() {
+            if &(*current).item < key {
+                if !(*current).left.is_null() {
+                    current = Node::left(current);
+                } else {
+                    break;
+                }
+            } else if &(*current).item > key {
+                if !(*current).right.is_null() {
+                    current = Node::right(current);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        None
     }
 }
 
 pub struct Tree<T> {
-    head: Node<T>,
+    /// The root `Node<T>` of our `Tree<T>`.
+    head: *mut Node<T>,
+    /// The chunk of memory used to store the `Node<T>`'s.
+    backing: *mut Node<T>,
+    /// What our current offset is into `backing`.
+    idx: usize,
+    /// The capacity of our backing memory.
+    cap: usize,
+    /// The current number of `Node<T>`s in backing.
+    len: usize,
 }
 
-impl<T> Tree<T> {}
+impl<T: Ord + fmt::Debug> Tree<T> {
+    pub fn insert(&mut self, item: T) {
+        if self.len < self.cap {
+            unsafe {
+                let next = Node::new(item, self.backing.add(self.idx));
+                self.idx += 1;
+                // `self.head` can be null here, it will be set.
+                self.head = Node::insert(self.head, next.addr);
+            }
+        } else {
+            panic!("not enough capacity: cap {}, len {}", self.cap, self.len)
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -392,18 +432,16 @@ mod test {
 
     #[test]
     fn create_tree() {
-        let mut space = [0_u8; 10 * mem::size_of::<Node<u8>>()];
-        let mut items = [0_u8; 10];
+        let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
+        let mut items = [10_u8, 9, 11, 8, 5, 15, 16, 20, 1, 2, 3, 23, 6];
         let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
-        let item_ptr = &mut items[0] as *mut u8;
 
         let mut root = ptr::null_mut();
-        for idx in 0_u8..5 {
+        for idx in 0_u8..13 {
             unsafe {
-                ptr::write(item_ptr.add(idx as usize), idx);
                 // Node::new writes the data to the ptr
                 // which is why we don't do the same as the above for the item_ptr
-                let mut node = Node::new(item_ptr.add(idx as usize), ptr.add(idx as usize));
+                let mut node = Node::new(items[idx as usize], ptr.add(idx as usize));
                 if idx == 0 {
                     root = node.addr;
                     (*root).color = NodeColor::Black;
@@ -414,12 +452,21 @@ mod test {
         }
 
         unsafe {
-            println!("hey");
             dbg!(&&&*root);
             Node::traverse_tree(
                 root,
-                &|val, align| println!("{}{}", " ".repeat(align), val),
-                3,
+                &|val, align, color| {
+                    println!(
+                        "{}{}{}\x1B[0m",
+                        " ".repeat(align),
+                        match color {
+                            NodeColor::Red => "\x1B[31m",
+                            NodeColor::Black => "\x1B[32m", // Green
+                        },
+                        format!("({})", val)
+                    )
+                },
+                0,
             );
         }
     }
