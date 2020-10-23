@@ -114,28 +114,6 @@ impl<T: fmt::Debug> Node<T> {
         }
     }
 
-    pub unsafe fn left_id(node: *mut Node<T>) -> Option<usize> {
-        if node.is_null() {
-            return None;
-        }
-        if (*node).left.is_null() {
-            None
-        } else {
-            unsafe { Some((*node).left as usize) }
-        }
-    }
-
-    pub unsafe fn right_id(node: *mut Node<T>) -> Option<usize> {
-        if node.is_null() {
-            return None;
-        }
-        if (*node).right.is_null() {
-            None
-        } else {
-            unsafe { Some((*node).right as usize) }
-        }
-    }
-
     pub unsafe fn parent(node: *mut Node<T>) -> *mut Node<T> {
         if node.is_null() {
             ptr::null_mut()
@@ -158,7 +136,7 @@ impl<T: fmt::Debug> Node<T> {
         if p.is_null() {
             return p;
         }
-        if Some(node as usize) == Node::left_id(p) {
+        if node == Node::left(p) {
             Node::right(p)
         } else {
             Node::left(p)
@@ -275,59 +253,48 @@ impl<T: fmt::Debug> Node<T> {
         }
     }
 
-    fn balance_1(new: *mut Node<T>) {
-        println!("balance 1");
-        unsafe {
-            (*new).color = NodeColor::Black;
-        }
+    unsafe fn balance_1(new: *mut Node<T>) {
+        (*new).color = NodeColor::Black;
     }
 
     fn balance_2(new: *mut Node<T>) {
         /* No-OP tree is still valid */
-        println!("balance 2");
     }
 
-    fn balance_3(new: *mut Node<T>) {
-        println!("balance 3");
-
-        unsafe {
-            (*Node::parent(new)).color = NodeColor::Black;
-            (*Node::uncle(new)).color = NodeColor::Black;
-            (*Node::grandparent(new)).color = NodeColor::Red;
-            Self::balance_insert(Node::grandparent(new))
-        }
+    unsafe fn balance_3(new: *mut Node<T>) {
+        (*Node::parent(new)).color = NodeColor::Black;
+        (*Node::uncle(new)).color = NodeColor::Black;
+        (*Node::grandparent(new)).color = NodeColor::Red;
+        Self::balance_insert(Node::grandparent(new))
     }
 
     unsafe fn balance_4(mut new: *mut Node<T>) {
-        println!("balance 4");
-        unsafe {
-            let p = Node::parent(new);
-            let g = Node::grandparent(new);
+        let p = Node::parent(new);
+        let g = Node::grandparent(new);
 
-            if new == Node::right(p) && p == Node::left(g) {
-                Node::rotate_left(p);
-                new = (*new).left;
-            } else if new == Node::left(p) && p == Node::right(g) {
-                Node::rotate_right(p);
-                new = (*new).right;
-            }
+        if new == Node::right(p) && p == Node::left(g) {
+            Node::rotate_left(p);
+            new = (*new).left;
+        } else if new == Node::left(p) && p == Node::right(g) {
+            Node::rotate_right(p);
+            new = (*new).right;
+        }
 
-            // Our `new` may be different now
-            let p = Node::parent(new);
-            let g = Node::grandparent(new);
+        // Our `new` may be different now
+        let p = Node::parent(new);
+        let g = Node::grandparent(new);
 
-            if new == Node::left(p) {
-                Node::rotate_right(g);
-            } else {
-                Node::rotate_left(g);
-            }
+        if new == Node::left(p) {
+            Node::rotate_right(g);
+        } else {
+            Node::rotate_left(g);
+        }
 
-            if !p.is_null() {
-                (*p).color = NodeColor::Black;
-            }
-            if !g.is_null() {
-                (*g).color = NodeColor::Red;
-            }
+        if !p.is_null() {
+            (*p).color = NodeColor::Black;
+        }
+        if !g.is_null() {
+            (*g).color = NodeColor::Red;
         }
     }
 }
@@ -489,6 +456,18 @@ pub struct Tree<T> {
     len: usize,
 }
 
+impl<T> Tree<T> {
+    pub fn new(backing: *mut Node<T>, cap: usize) -> Self {
+        Self {
+            head: ptr::null_mut(),
+            backing,
+            idx: 0,
+            cap,
+            len: 0,
+        }
+    }
+}
+
 impl<T: Ord + fmt::Debug> Tree<T> {
     pub fn insert(&mut self, item: T) {
         if self.len < self.cap {
@@ -521,7 +500,35 @@ mod test {
     }
 
     #[test]
-    fn create_tree() {
+    fn node_insert() {
+        let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
+        let mut items = [10_u8, 9, 11, 8, 5, 15, 16, 20, 1, 2, 3, 23, 6];
+
+        let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
+
+        let mut root = ptr::null_mut();
+        for idx in 0_u8..13 {
+            unsafe {
+                // Node::new writes the data to the ptr
+                // which is why we don't do the same as the above for the item_ptr
+                let mut node = Node::new(items[idx as usize], ptr.add(idx as usize));
+                if idx == 0 {
+                    root = node.addr;
+                    (*root).color = NodeColor::Black;
+                } else {
+                    root = Node::insert(root, node.addr);
+                }
+            }
+        }
+
+        unsafe {
+            dbg!(&&&*root);
+            Node::traverse_tree(root, &print_color, 0);
+        }
+    }
+
+    #[test]
+    fn node_remove() {
         let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
         let mut items = [10_u8, 9, 11, 8, 5, 15, 16, 20, 1, 2, 3, 23, 6];
 
@@ -544,8 +551,32 @@ mod test {
         }
 
         unsafe {
+            //        4
+            //      /   \
+            //     2     6
+            //    / \   / \
+            //  (1)  3  5  7
+            Node::delete(root, &1);
+
             dbg!(&&&*root);
             Node::traverse_tree(root, &print_color, 0);
+        }
+    }
+
+    #[test]
+    fn create_tree() {
+        let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
+
+        let mut items = [4u8, 5, 3, 6, 2, 7, 1, 8];
+        let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
+
+        let mut root = Tree::new(ptr, 20);
+        for idx in 0_u8..7 {
+            root.insert(items[idx as usize]);
+        }
+
+        unsafe {
+            Node::traverse_tree(root.head, &print_color, 0);
         }
     }
 }
