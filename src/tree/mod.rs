@@ -23,7 +23,7 @@ pub enum Balance {
     Center,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NodeColor {
     Red,
     Black,
@@ -154,6 +154,19 @@ impl<T: fmt::Debug> Node<T> {
             ptr::null_mut()
         } else {
             Node::sibling(p)
+        }
+    }
+
+    /// Compares `node`s color to the given `color`.
+    ///
+    /// # Safety
+    /// If the pointer is null this will return false.
+    // TODO this may not be a good idea
+    pub unsafe fn cmp_color(node: *mut Node<T>, color: NodeColor) -> bool {
+        if node.is_null() {
+            false
+        } else {
+            (*node).color == color
         }
     }
 
@@ -297,6 +310,154 @@ impl<T: fmt::Debug> Node<T> {
             (*g).color = NodeColor::Red;
         }
     }
+
+    unsafe fn delete_case1(node: *mut Node<T>) {
+        println!("case 1");
+        if !Node::parent(node).is_null() {
+            Node::delete_case2(node);
+        }
+    }
+
+    unsafe fn delete_case2(node: *mut Node<T>) {
+        println!("case 2");
+
+        let sib = Node::sibling(node);
+
+        if Node::cmp_color(sib, NodeColor::Red) {
+            (*(*node).parent).color = NodeColor::Red;
+            (*sib).color = NodeColor::Black;
+            if node == Node::left(Node::parent(node)) {
+                Node::rotate_left((*node).parent);
+            } else {
+                Node::rotate_right((*node).parent);
+            }
+        }
+
+        Node::delete_case3(node)
+    }
+
+    unsafe fn delete_case3(node: *mut Node<T>) {
+        println!("case 3");
+
+        let sib = Node::sibling(node);
+
+        if Node::cmp_color(Node::parent(node), NodeColor::Black)
+            && Node::cmp_color(sib, NodeColor::Black)
+            && Node::cmp_color(Node::left(sib), NodeColor::Black)
+            && Node::cmp_color(Node::right(sib), NodeColor::Black)
+        {
+            (*sib).color = NodeColor::Red;
+            Node::delete_case1(Node::parent(node));
+        } else {
+            Node::delete_case4(node);
+        }
+    }
+
+    unsafe fn delete_case4(node: *mut Node<T>) {
+        println!("case 4");
+
+        let sib = Node::sibling(node);
+
+        if Node::cmp_color(Node::parent(node), NodeColor::Red)
+            && Node::cmp_color(sib, NodeColor::Black)
+            && Node::cmp_color(Node::left(sib), NodeColor::Black)
+            && Node::cmp_color(Node::right(sib), NodeColor::Black)
+        {
+            (*sib).color = NodeColor::Red;
+            (*(*node).parent).color = NodeColor::Black;
+        } else {
+            Node::delete_case5(node);
+        }
+    }
+
+    unsafe fn delete_case5(node: *mut Node<T>) {
+        println!("case 5");
+
+        let sib = Node::sibling(node);
+
+        if Node::cmp_color(sib, NodeColor::Black) {
+            // Force the red on to the left of the left parent or
+            // right of the right parent
+            if node == Node::left(Node::parent(node))
+                && Node::cmp_color(Node::right(sib), NodeColor::Black)
+                && Node::cmp_color(Node::left(sib), NodeColor::Red)
+            {
+            } else if node == Node::right(Node::parent(node))
+                && Node::cmp_color(Node::left(sib), NodeColor::Black)
+                && Node::cmp_color(Node::right(sib), NodeColor::Red)
+            {
+                (*sib).color = NodeColor::Red;
+                (*(*sib).right).color = NodeColor::Black;
+                Node::rotate_left(sib);
+            }
+        }
+
+        Node::delete_case6(node);
+    }
+
+    unsafe fn delete_case6(node: *mut Node<T>) {
+        println!("case 6");
+
+        let sib = Node::sibling(node);
+
+        (*sib).color = (*Node::parent(node)).color;
+        (*(*node).parent).color = NodeColor::Black;
+
+        if node == Node::left(Node::parent(node)) {
+            (*(*sib).right).color = NodeColor::Black;
+            Node::rotate_left(Node::parent(node));
+        } else {
+            (*(*sib).left).color = NodeColor::Black;
+            Node::rotate_right(Node::parent(node));
+        }
+    }
+
+    /// Detach the `Node` and replace it with `child`.
+    ///
+    /// # Safety
+    /// Both pointers must be __non null__.
+    unsafe fn replace_node(node: *mut Node<T>, child: *mut Node<T>) {
+        (*child).parent = (*node).parent;
+
+        // is this the left node?
+        if node == Node::left(Node::parent(node)) {
+            (*(*node).parent).left = child;
+        } else {
+            (*(*node).parent).right = child;
+        }
+    }
+
+    // TODO have a callback when the node is detached to deal with the memory?
+    unsafe fn delete_node(node: *mut Node<T>) {
+        let child = if Node::right(node).is_null() {
+            Node::left(node)
+        } else {
+            Node::right(node)
+        };
+
+        // Special case to handle deleting a red `Node` with no children
+        if child.is_null() && Node::cmp_color(node, NodeColor::Red) {
+            if node == Node::left(Node::parent(node)) {
+                (*(*node).parent).left = ptr::null_mut();
+            } else if node == Node::right(Node::parent(node)) {
+                (*(*node).parent).right = ptr::null_mut();
+            }
+            panic!();
+            return;
+        } else if child.is_null() && Node::cmp_color(node, NodeColor::Black) {
+            // The much more complicated case of a black node
+            panic!()
+        }
+
+        Node::replace_node(node, child);
+        if (*node).color == NodeColor::Black {
+            if (*child).color == NodeColor::Red {
+                (*child).color = NodeColor::Black;
+            } else {
+                Node::delete_case1(child);
+            }
+        }
+    }
 }
 
 impl<T: Ord + Eq + fmt::Debug> Node<T> {
@@ -344,79 +505,6 @@ impl<T: Ord + Eq + fmt::Debug> Node<T> {
         root
     }
 
-    unsafe fn delete_case1(node: *mut Node<T>) {
-        if !Node::parent(node).is_null() {
-            Node::delete_case2(node);
-        }
-    }
-
-    unsafe fn delete_case2(node: *mut Node<T>) {
-        let sib = Node::sibling(node);
-
-        if !sib.is_null() && (*sib).color == NodeColor::Red {
-            (*(*node).parent).color = NodeColor::Red;
-            (*sib).color = NodeColor::Black;
-            if node == Node::left(Node::parent(node)) {
-                Node::rotate_left((*node).parent);
-            } else {
-                Node::rotate_right((*node).parent);
-            }
-        }
-
-        Node::delete_case3(node)
-    }
-
-    unsafe fn delete_case3(node: *mut Node<T>) {
-        let sib = Node::sibling(node);
-
-        if !sib.is_null() && (*sib).color == NodeColor::Red {
-            (*(*node).parent).color = NodeColor::Red;
-            (*sib).color = NodeColor::Black;
-            if node == Node::left(Node::parent(node)) {
-                Node::rotate_left((*node).parent);
-            } else {
-                Node::rotate_right((*node).parent);
-            }
-        }
-
-        Node::delete_case4(node)
-    }
-
-    unsafe fn delete_case4(node: *mut Node<T>) {}
-
-    /// Detach the `Node` and replace it with `child`.
-    ///
-    /// # Safety
-    /// Both pointers must be __non null__.
-    unsafe fn replace_node(node: *mut Node<T>, child: *mut Node<T>) {
-        (*child).parent = (*node).parent;
-
-        // is this the left node?
-        if node == Node::left(Node::parent(node)) {
-            (*(*node).parent).left = child;
-        } else {
-            (*(*node).parent).right = child;
-        }
-    }
-
-    unsafe fn delete_node(node: *mut Node<T>) {
-        let child = if Node::right(node).is_null() {
-            Node::left(node)
-        } else {
-            Node::right(node)
-        };
-        assert!(!child.is_null());
-
-        Node::replace_node(node, child);
-        if (*node).color == NodeColor::Black {
-            if (*child).color == NodeColor::Red {
-                (*child).color = NodeColor::Black;
-            } else {
-                Node::delete_case1(child);
-            }
-        }
-    }
-
     /// Unhook the `Node` that matches `key` form the tree.
     ///
     /// # Safety
@@ -428,10 +516,10 @@ impl<T: Ord + Eq + fmt::Debug> Node<T> {
         let mut current = root;
         while !current.is_null() {
             match (*current).item.cmp(key) {
-                Ordering::Greater if !(*current).right.is_null() => {
+                Ordering::Less if !(*current).right.is_null() => {
                     current = Node::right(current);
                 }
-                Ordering::Less if !(*current).left.is_null() => {
+                Ordering::Greater if !(*current).left.is_null() => {
                     current = Node::left(current);
                 }
                 _ => break,
@@ -522,7 +610,6 @@ mod test {
         }
 
         unsafe {
-            dbg!(&&&*root);
             Node::traverse_tree(root, &print_color, 0);
         }
     }
@@ -530,9 +617,7 @@ mod test {
     #[test]
     fn node_remove() {
         let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
-        let mut items = [10_u8, 9, 11, 8, 5, 15, 16, 20, 1, 2, 3, 23, 6];
-
-        let mut items = [4u8, 5, 3, 6, 2, 7, 1, 8];
+        let mut items = [4u8, 5, 3, 6, 2, 7, 1];
         let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
 
         let mut root = ptr::null_mut();
@@ -555,10 +640,43 @@ mod test {
             //      /   \
             //     2     6
             //    / \   / \
-            //  (1)  3  5  7
+            //  (1)  3  5  (7)
             Node::delete(root, &1);
+            Node::delete(root, &7);
 
-            dbg!(&&&*root);
+            Node::traverse_tree(root, &print_color, 0);
+        }
+    }
+
+    #[test]
+    fn node_remove2() {
+        let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
+        let mut items = [4u8, 5, 3, 6, 2, 7, 1];
+        let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
+
+        let mut root = ptr::null_mut();
+        for idx in 0_u8..7 {
+            unsafe {
+                // Node::new writes the data to the ptr
+                // which is why we don't do the same as the above for the item_ptr
+                let mut node = Node::new(items[idx as usize], ptr.add(idx as usize));
+                if idx == 0 {
+                    root = node.addr;
+                    (*root).color = NodeColor::Black;
+                } else {
+                    root = Node::insert(root, node.addr);
+                }
+            }
+        }
+
+        unsafe {
+            //        4
+            //      /   \
+            //    (2)    6
+            //    / \   / \
+            //   1  3  5   7
+            Node::delete(root, &2);
+
             Node::traverse_tree(root, &print_color, 0);
         }
     }
