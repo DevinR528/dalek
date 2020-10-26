@@ -67,7 +67,7 @@ impl Chunk {
 mod test {
     use super::*;
 
-    const CHUNK_SIZE: usize = 16;
+    const CHUNK_SIZE: usize = 1024;
     const CACHE_LINE: usize = 16;
 
     fn is_power_of_2(num: usize) -> bool {
@@ -143,5 +143,13 @@ mod test {
     }
 
     #[test]
-    fn math_stuff() {}
+    fn math_stuff() {
+        println!("{}", calculate_shift_magic(26));
+        println!("{}", calculate_shift_magic(2));
+        println!("{}", 8 << 2); // left shift
+        println!("{}", 8 >> 2); // right shift
+        println!("{}", calculate_shift_magic(16));
+        println!("{}", calculate_shift_magic(357));
+        println!("{}", calculate_multiply_magic(26))
+    }
 }

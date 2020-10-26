@@ -43,8 +43,8 @@ impl<T: fmt::Debug> fmt::Debug for Node<T> {
         f.debug_struct("Node")
             .field("item", &self.item)
             .field("color", &self.color)
-            .field("addr", &self.addr)
-            .field("parent", &self.parent)
+            .field("address", &self.addr)
+            .field("parent ", &self.parent)
             .field("left", unsafe {
                 if self.left.is_null() {
                     &"null"
@@ -155,6 +155,28 @@ impl<T: fmt::Debug> Node<T> {
         } else {
             Node::sibling(p)
         }
+    }
+
+    /// Search for the smallest child (most left).
+    ///
+    /// # Safety
+    pub unsafe fn most_left(node: *mut Node<T>) -> *mut Node<T> {
+        let mut left = node;
+        while !Node::left(left).is_null() {
+            left = Node::left(left);
+        }
+        left
+    }
+
+    /// Search for the largest child (most right).
+    ///
+    /// # Safety
+    pub unsafe fn most_right(node: *mut Node<T>) -> *mut Node<T> {
+        let mut right = node;
+        while !Node::right(right).is_null() {
+            right = Node::right(right);
+        }
+        right
     }
 
     /// Compares `node`s color to the given `color`.
@@ -412,11 +434,44 @@ impl<T: fmt::Debug> Node<T> {
         }
     }
 
+    /// Binary Search Tree delete.
+    ///
+    /// # Safety
+    /// It ain't yet.
+    unsafe fn bst_delete(node: *mut Node<T>) {
+        // TODO I think we need to alternate between left sub tree and right subtree
+        // smallest node in right
+        // largest node in left
+        let leftest = Node::most_left(Node::right(node));
+        let rightest = Node::most_right(Node::left(node));
+
+        println!("{}", leftest as usize);
+        println!("{}", (leftest as usize) % 2);
+
+        // TODO: this don't be working right, obviously depending on size and first pointer
+        // this will always be one or the other never both for the same tree...
+        let most = if (leftest as usize) % 2 == 0 {
+            rightest
+        } else {
+            leftest
+        };
+
+        // swap values, our left/right most value is now node.item and recurse
+        mem::swap(&mut (*node).item, &mut (*most).item);
+        dbg!(&*node);
+        Node::delete_node(most);
+    }
+
     /// Detach the `Node` and replace it with `child`.
     ///
     /// # Safety
     /// Both pointers must be __non null__.
     unsafe fn replace_node(node: *mut Node<T>, child: *mut Node<T>) {
+        //        4                     4
+        //      /   \                 /   \
+        //    (2)    6      ==>      1     6
+        //    / \   / \               \   /  \
+        //   1  3  5   7               3  5   7
         (*child).parent = (*node).parent;
 
         // is this the left node?
@@ -425,25 +480,35 @@ impl<T: fmt::Debug> Node<T> {
         } else {
             (*(*node).parent).right = child;
         }
+        dbg!(&*node);
     }
 
     // TODO have a callback when the node is detached to deal with the memory?
     unsafe fn delete_node(node: *mut Node<T>) {
+        // Both children are present we go to either the
+        // right child's left until we find a null left Node or the left child's
+        // right.
+        if !Node::right(node).is_null() && !Node::left(node).is_null() {
+            Node::bst_delete(node);
+            return;
+        }
+
         let child = if Node::right(node).is_null() {
             Node::left(node)
         } else {
             Node::right(node)
         };
-
         // Special case to handle deleting a red `Node` with no children
         if child.is_null() && Node::cmp_color(node, NodeColor::Red) {
             if node == Node::left(Node::parent(node)) {
+                println!("{:?}", node);
                 (*(*node).parent).left = ptr::null_mut();
+                return;
             } else if node == Node::right(Node::parent(node)) {
+                println!("{:?}", node);
                 (*(*node).parent).right = ptr::null_mut();
+                return;
             }
-            panic!();
-            return;
         } else if child.is_null() && Node::cmp_color(node, NodeColor::Black) {
             // The much more complicated case of a black node
             panic!()
@@ -511,7 +576,7 @@ impl<T: Ord + Eq + fmt::Debug> Node<T> {
     ///
     /// We return the the pointer to the `Node<T>` that matches `key`. This operation
     /// does __NOT__ free the memory the `Node<T>` occupies, the `Tree<T>` must
-    /// keep track of it. The pointer returned can be null.
+    /// keep track of it. The pointer returned can be null if `root` is null.
     unsafe fn delete(mut root: *mut Node<T>, key: &T) -> *mut Node<T> {
         let mut current = root;
         while !current.is_null() {
@@ -615,7 +680,7 @@ mod test {
     }
 
     #[test]
-    fn node_remove() {
+    fn node_remove1() {
         let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
         let mut items = [4u8, 5, 3, 6, 2, 7, 1];
         let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
@@ -670,12 +735,26 @@ mod test {
         }
 
         unsafe {
+            // The following diagrams are correct if and only if the deletion algorithm
+            // has a left leaning bst delete. If we use a combo of right child -> left and
+            // left child -> right a more balanced tree is maintained.
             //        4
             //      /   \
             //    (2)    6
             //    / \   / \
             //   1  3  5   7
             Node::delete(root, &2);
+            //        4
+            //      /   \
+            //     1    (6)
+            //      \   / \
+            //      3  5   7
+            Node::delete(root, &6);
+            //        4
+            //      /   \
+            //     1     5
+            //      \     \
+            //      3      7
 
             Node::traverse_tree(root, &print_color, 0);
         }
