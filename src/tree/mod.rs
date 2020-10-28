@@ -14,13 +14,34 @@ use crate::{
     util::{align, extra_brk, MIN_ALIGN},
 };
 
-pub enum Balance {
-    /// `Left` balanced is equal to -1.
-    Left,
-    /// `Right` balanced is equal to 1.
-    Right,
-    /// `Center`ed is equal to 0.
-    Center,
+static mut SEED: u64 = 0x9E3779B97F4A7C15;
+
+/// Returns psudo-random number and modifies `SEED`.
+///
+/// Uses primes but is in no way secure it's not even truly random.
+pub fn split_mix_64() -> usize {
+    let mut z = unsafe {
+        SEED = SEED.wrapping_add(0x9E3779B97F4A7C15);
+        SEED
+    };
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+
+    (z ^ (z >> 31)) as usize
+}
+
+pub fn is_even(x: usize) -> bool {
+    x % 2 == 0
+}
+
+/// Returns a semi random bool to determine which child
+/// to start a removal from.
+///
+/// When a `Node<T>` is found for removal one can either choose
+/// the left child's most right descendant or the right child's most
+/// left descendant.
+fn start_right() -> bool {
+    is_even(split_mix_64())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -223,8 +244,8 @@ impl<T: fmt::Debug> Node<T> {
                 //    R                 P
                 // P
                 if node == Node::left(p) {
-                    dbg!(&node);
-                    dbg!(&(*node).addr);
+                    // dbg!(&node);
+                    // dbg!(&(*node).addr);
                     (*p).left = new_node;
                 } else if node == Node::right(p) {
                     (*p).right = new_node;
@@ -439,26 +460,22 @@ impl<T: fmt::Debug> Node<T> {
     /// # Safety
     /// It ain't yet.
     unsafe fn bst_delete(node: *mut Node<T>) {
-        // TODO I think we need to alternate between left sub tree and right subtree
-        // smallest node in right
+        // TODO: I think we need to alternate between left sub
+        // tree and right subtree smallest node in right
         // largest node in left
-        let leftest = Node::most_left(Node::right(node));
-        let rightest = Node::most_right(Node::left(node));
+        //
+        // TODO: we are now alternating see how that goes
+        let predecessor = Node::most_left(Node::right(node));
+        let successor = Node::most_right(Node::left(node));
 
-        println!("{}", leftest as usize);
-        println!("{}", (leftest as usize) % 2);
-
-        // TODO: this don't be working right, obviously depending on size and first pointer
-        // this will always be one or the other never both for the same tree...
-        let most = if (leftest as usize) % 2 == 0 {
-            rightest
+        let most = if start_right() {
+            successor
         } else {
-            leftest
+            predecessor
         };
 
         // swap values, our left/right most value is now node.item and recurse
         mem::swap(&mut (*node).item, &mut (*most).item);
-        dbg!(&*node);
         Node::delete_node(most);
     }
 
@@ -480,7 +497,7 @@ impl<T: fmt::Debug> Node<T> {
         } else {
             (*(*node).parent).right = child;
         }
-        dbg!(&*node);
+        // dbg!(&*node);
     }
 
     // TODO have a callback when the node is detached to deal with the memory?
@@ -501,11 +518,9 @@ impl<T: fmt::Debug> Node<T> {
         // Special case to handle deleting a red `Node` with no children
         if child.is_null() && Node::cmp_color(node, NodeColor::Red) {
             if node == Node::left(Node::parent(node)) {
-                println!("{:?}", node);
                 (*(*node).parent).left = ptr::null_mut();
                 return;
             } else if node == Node::right(Node::parent(node)) {
-                println!("{:?}", node);
                 (*(*node).parent).right = ptr::null_mut();
                 return;
             }
@@ -577,7 +592,7 @@ impl<T: Ord + Eq + fmt::Debug> Node<T> {
     /// We return the the pointer to the `Node<T>` that matches `key`. This operation
     /// does __NOT__ free the memory the `Node<T>` occupies, the `Tree<T>` must
     /// keep track of it. The pointer returned can be null if `root` is null.
-    unsafe fn delete(mut root: *mut Node<T>, key: &T) -> *mut Node<T> {
+    unsafe fn delete(mut root: *mut Node<T>, key: &T) -> Option<*mut Node<T>> {
         let mut current = root;
         while !current.is_null() {
             match (*current).item.cmp(key) {
@@ -587,12 +602,13 @@ impl<T: Ord + Eq + fmt::Debug> Node<T> {
                 Ordering::Greater if !(*current).left.is_null() => {
                     current = Node::left(current);
                 }
-                _ => break,
+                Ordering::Equal => break,
+                _ => return None,
             }
         }
 
         Node::delete_node(current);
-        current
+        Some(current)
     }
 }
 
@@ -634,6 +650,19 @@ impl<T: Ord + fmt::Debug> Tree<T> {
             panic!("not enough capacity: cap {}, len {}", self.cap, self.len)
         }
     }
+
+    pub fn remove(&mut self, key: &T) -> Option<T> {
+        Some(unsafe {
+            let ptr = Node::delete(self.head, key)?;
+            // TODO: keep track of this freed Node<T> for reallocation/free
+
+            if ptr.is_null() {
+                panic!()
+            } else {
+                ptr::read(ptr).item
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -650,6 +679,16 @@ mod test {
             },
             format!("({}{})", "0".repeat(2 - val.to_string().len()), val)
         )
+    }
+
+    #[test]
+    fn rnd_test() {
+        let mut v = vec![];
+        for x in 0..30 {
+            let y = split_mix_64();
+            v.push(is_even(y));
+        }
+        // println!("{:?}", v);
     }
 
     #[test]
@@ -675,7 +714,7 @@ mod test {
         }
 
         unsafe {
-            Node::traverse_tree(root, &print_color, 0);
+            // Node::traverse_tree(root, &print_color, 0);
         }
     }
 
@@ -709,7 +748,7 @@ mod test {
             Node::delete(root, &1);
             Node::delete(root, &7);
 
-            Node::traverse_tree(root, &print_color, 0);
+            // Node::traverse_tree(root, &print_color, 0);
         }
     }
 
@@ -756,7 +795,7 @@ mod test {
             //      \     \
             //      3      7
 
-            Node::traverse_tree(root, &print_color, 0);
+            // Node::traverse_tree(root, &print_color, 0);
         }
     }
 
@@ -773,7 +812,7 @@ mod test {
         }
 
         unsafe {
-            Node::traverse_tree(root.head, &print_color, 0);
+            // Node::traverse_tree(root.head, &print_color, 0);
         }
     }
 }

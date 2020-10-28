@@ -105,13 +105,13 @@ impl Block {
             // It's gotta be Some and we keep looping if InUse && our blk is to small
             while !(b.is_null() || (*b).free == BlockState::Free && (*b).size >= size) {
                 if (*b).next.is_null() {
-                    dbg!(*b);
+                    // dbg!(*b);
 
                     return b;
                 }
                 b = (*b).next as *mut _;
             }
-            dbg!(*b);
+            // dbg!(*b);
             b
         }
     }
@@ -157,7 +157,7 @@ impl Block {
             let mut blk = *ptr;
             // If we have a non null and free block absorb it
             if !blk.next.is_null() && (*blk.next).free == BlockState::Free {
-                dbg!(*ptr);
+                // dbg!(*ptr);
                 (*ptr).size += BLOCK_SIZE + (*(*ptr).next).size;
                 (*ptr).next = (*(*ptr).next).next;
 
@@ -165,8 +165,8 @@ impl Block {
                 if !(*ptr).next.is_null() {
                     (*(*ptr).next).prev = ptr;
                 }
-                dbg!(&*crate::GLOBAL_BASE);
-                dbg!(&ptr);
+                // dbg!(&*crate::GLOBAL_BASE);
+                // dbg!(&ptr);
             }
         }
         ptr
@@ -192,8 +192,8 @@ impl Block {
         (*ptr).size = size;
         // new is Block.data (pointer to itself) so this works
         (*ptr).next = new;
-        dbg!(&*crate::GLOBAL_BASE);
-        dbg!(size);
+        // dbg!(&*crate::GLOBAL_BASE);
+        // dbg!(size);
     }
 
     pub unsafe fn copy_block(src: *mut Block, dst: *mut Block, count: usize) {

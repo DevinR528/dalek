@@ -74,11 +74,11 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
     if GLOBAL_BASE.is_null() {
         let blk = Block::extend_heap(ptr::null_mut(), size);
         GLOBAL_BASE = blk;
-        dbg!(*GLOBAL_BASE);
+        // dbg!(*GLOBAL_BASE);
 
         (*blk).data.add(1) as *mut u8
     } else {
-        dbg!(*GLOBAL_BASE);
+        // dbg!(*GLOBAL_BASE);
 
         // watch this when fixing ptr arithmetic this size is the data size not total
         let blk_ptr = Block::find_block(GLOBAL_BASE, size);
@@ -102,13 +102,13 @@ unsafe fn malloc(layout: Layout) -> *mut u8 {
         }
 
         (*blk_ptr).free = BlockState::InUse;
-        dbg!(*GLOBAL_BASE);
+        // dbg!(*GLOBAL_BASE);
         (*blk_ptr).data.add(1) as *mut u8
     }
 }
 
 // TODO
-#[cfg(target_os = "unix")]
+#[cfg(target_family = "unix")]
 unsafe fn align_malloc(layout: Layout) -> *mut u8 {
     let mut out = ptr::null_mut();
     let align = layout.align().max(crate::mem::size_of::<usize>());
@@ -135,8 +135,8 @@ unsafe fn realloc(ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
 
         free(ptr, layout);
     }
-    dbg!(*GLOBAL_BASE);
-    dbg!(*Block::get_block(new_ptr));
+    // dbg!(*GLOBAL_BASE);
+    // dbg!(*Block::get_block(new_ptr));
     new_ptr
 }
 
