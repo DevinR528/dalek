@@ -146,8 +146,8 @@ mod test {
     fn math_stuff() {
         println!("{}", calculate_shift_magic(26));
         println!("{}", calculate_shift_magic(2));
-        println!("{}", 8 << 2); // left shift
-        println!("{}", 8 >> 2); // right shift
+        println!("{}", 8 << 2); // left shift (larger)
+        println!("{}", 8 >> 2); // right shift (smaller)
         println!("{}", calculate_shift_magic(16));
         println!("{}", calculate_shift_magic(357));
         println!("{}", calculate_multiply_magic(26))

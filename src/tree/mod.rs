@@ -19,6 +19,7 @@ static mut SEED: u64 = 0x9E3779B97F4A7C15;
 /// Returns psudo-random number and modifies `SEED`.
 ///
 /// Uses primes but is in no way secure it's not even truly random.
+// taken from https://github.com/lemire/testingRNG/blob/master/source/splitmix64.h
 pub fn split_mix_64() -> usize {
     let mut z = unsafe {
         SEED = SEED.wrapping_add(0x9E3779B97F4A7C15);
@@ -688,7 +689,7 @@ mod test {
             let y = split_mix_64();
             v.push(is_even(y));
         }
-        // println!("{:?}", v);
+        println!("{:?}", v);
     }
 
     #[test]
@@ -714,7 +715,7 @@ mod test {
         }
 
         unsafe {
-            // Node::traverse_tree(root, &print_color, 0);
+            Node::traverse_tree(root, &print_color, 0);
         }
     }
 
@@ -748,7 +749,7 @@ mod test {
             Node::delete(root, &1);
             Node::delete(root, &7);
 
-            // Node::traverse_tree(root, &print_color, 0);
+            Node::traverse_tree(root, &print_color, 0);
         }
     }
 
@@ -789,13 +790,13 @@ mod test {
             //      \   / \
             //      3  5   7
             Node::delete(root, &6);
+            // This diagram shows a right leaning bst delete of node 6
             //        4
             //      /   \
-            //     1     5
-            //      \     \
-            //      3      7
-
-            // Node::traverse_tree(root, &print_color, 0);
+            //     1     7
+            //      \    /
+            //       3  5
+            Node::traverse_tree(root, &print_color, 0);
         }
     }
 
@@ -812,7 +813,26 @@ mod test {
         }
 
         unsafe {
-            // Node::traverse_tree(root.head, &print_color, 0);
+            Node::traverse_tree(root.head, &print_color, 0);
+        }
+    }
+
+    #[test]
+    fn tree_remove_root() {
+        let mut space = [0_u8; 20 * mem::size_of::<Node<u8>>()];
+
+        let mut items = [4u8, 5, 3, 6, 2, 7, 1, 8];
+        let mut ptr = &mut space[0] as *mut u8 as *mut Node<u8>;
+
+        let mut root = Tree::new(ptr, 20);
+        for idx in 0_u8..7 {
+            root.insert(items[idx as usize]);
+        }
+
+        assert!(root.remove(&4).is_some());
+
+        unsafe {
+            Node::traverse_tree(root.head, &print_color, 0);
         }
     }
 }
